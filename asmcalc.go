@@ -110,7 +110,7 @@ func (c *Compiler) Lex() {
 			c.pos++
 			continue
 		}
-		panic(fmt.Sprintf("unknown char: %c\n", ch))
+		panic(fmt.Sprintf("unknown char: %c", ch))
 	}
 	c.tokens = append(c.tokens, Token{Type: TOK_EOF})
 }
@@ -245,7 +245,7 @@ func (c *Compiler) consume(typ TokenType) Token {
 		c.tokenPos++
 		return tok
 	}
-	panic(fmt.Sprintf("expected token type %d\n", typ))
+	panic(fmt.Sprintf("expected token type %d", typ))
 }
 
 func (c *Compiler) emitFactor(w io.Writer) {
@@ -262,7 +262,7 @@ func (c *Compiler) emitFactor(w io.Writer) {
 		c.consume(TOK_RPAREN)
 		return
 	}
-	panic("unexpected token\n")
+	panic("unexpected token")
 }
 
 func (c *Compiler) emitTerm(w io.Writer) {
@@ -323,5 +323,5 @@ func (c *Compiler) evalFactor() int {
 		c.consume(TOK_RPAREN)
 		return result
 	}
-	panic("unexpected token\n")
+	panic("unexpected token")
 }
