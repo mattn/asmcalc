@@ -6,11 +6,9 @@ import (
 )
 
 func TestCompile(t *testing.T) {
-	tokens, err := lex([]byte("3 + 5 * (2 - 8)"))
-	if err != nil {
-		t.Fatalf("lexing failed: %v", err)
-	}
-	for _, tok := range tokens {
+	compiler := NewCompiler("3 + 5 * (2 - 8)")
+	compiler.Lex()
+	for _, tok := range compiler.tokens {
 		switch tok.Type {
 		case TOK_NUM:
 			fmt.Print(tok.Value)
