@@ -2,6 +2,8 @@
 
 A sample compiler that translates arithmetic expressions into GAS (GNU Assembler) format x86-64 assembly code.
 
+Supports both Linux and Windows platforms.
+
 ## Features
 
 - Compiles arithmetic expressions (addition, subtraction, multiplication, division) to x86-64 assembly
@@ -13,7 +15,7 @@ A sample compiler that translates arithmetic expressions into GAS (GNU Assembler
 
 - Go (for building the compiler)
 - GNU `as` (assembler)
-- GNU `ld` (linker)
+- GNU `ld` (linker) on Linux, or `link.exe` on Windows
 
 ## Building
 
@@ -86,6 +88,6 @@ More examples:
 
 1. The compiler lexes and parses arithmetic expressions
 2. Generates x86-64 assembly using a stack-based approach
-3. The generated assembly uses Linux syscalls to print the result and exit
+3. The generated assembly uses platform-specific syscalls (Linux) or Windows API calls to print the result and exit
 4. The assembly is piped to `as` (assembler) which creates an object file
-5. The object file is linked with `ld` to create a standalone executable
+5. The object file is linked with `ld` (Linux) or `link.exe` (Windows) to create a standalone executable
