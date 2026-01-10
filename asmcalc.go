@@ -183,12 +183,16 @@ func (c *Compiler) emitTerm(out *os.File) {
 	for c.peek().Type == TOK_MUL || c.peek().Type == TOK_DIV {
 		op := c.consume(c.peek().Type).Type
 		c.emitFactor(out)
-		// popq two operands
+		fmt.Fprintln(out, "  popq %rax            # Get second operand")
+		fmt.Fprintln(out, "  popq %rbx            # Get first operand")
 		if op == TOK_MUL {
-			// multiply
+			fmt.Fprintln(out, "  imulq %rbx, %rax     # Multiply")
 		} else {
-			// divide
+			fmt.Fprintln(out, "  movq %rax, %rcx      # Save divisor")
+			fmt.Fprintln(out, "  movq %rbx, %rax      # Move dividend to RAX")
+			fmt.Fprintln(out, "  xorq %rdx, %rdx      # Clear RDX for division")
+			fmt.Fprintln(out, "  idivq %rcx           # Divide RDX:RAX by divisor")
 		}
-		// pushq result
+		fmt.Fprintln(out, "  pushq %rax           # Save result")
 	}
 }
