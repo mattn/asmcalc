@@ -118,6 +118,13 @@ func (c *Compiler) Compile() error {
 	fmt.Fprintln(out, "_start:")
 	c.emitExpr(out)
 
+	fmt.Fprintln(out, "  movq $60, %rax       # Syscall: exit")
+	fmt.Fprintln(out, "  xorq %rdi, %rdi      # Exit code: 0")
+	fmt.Fprintln(out, "  syscall              # Call kernel")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, ".bss")
+	fmt.Fprintln(out, ".space 32              # 32-byte buffer for number")
+	fmt.Fprintln(out, "buffer:")
 	return nil
 }
 
@@ -126,13 +133,16 @@ func (c *Compiler) emitExpr(out *os.File) {
 	for c.peek().Type == TOK_PLUS || c.peek().Type == TOK_MINUS {
 		op := c.consume(c.peek().Type).Type
 		c.emitTerm(out)
-		// emit two operand
+		fmt.Fprintln(out, "  popq %rax            # Get second operand")
+		fmt.Fprintln(out, "  popq %rbx            # Get first operand")
 		if op == TOK_PLUS {
-			// add it
+			fmt.Fprintln(out, "  addq %rbx, %rax      # Add them")
 		} else {
-			// subtract it
+			fmt.Fprintln(out, "  subq %rax, %rbx      # Subtract")
+			fmt.Fprintln(out, "  movq %rbx, %rax      # Result in RAX")
+
 		}
-		// push
+		fmt.Fprintln(out, "  pushq %rax           # Save result")
 	}
 }
 

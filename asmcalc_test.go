@@ -31,8 +31,8 @@ func TestCompile(t *testing.T) {
 		case TOK_EOF:
 			fmt.Println("")
 		default:
-			println(tok.Type)
-			fmt.Printf("UNKNOWN ")
+			fmt.Printf("(UNKNOWN)")
 		}
 	}
+	compiler.Compile()
 }
