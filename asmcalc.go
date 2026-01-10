@@ -2,7 +2,7 @@ package asmcalc
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"strings"
 	"unicode"
 )
@@ -110,39 +110,37 @@ func (c *Compiler) Lex() {
 	c.tokens = append(c.tokens, Token{Type: TOK_EOF})
 }
 
-func (c *Compiler) Compile() error {
-	out := os.Stdout
-	fmt.Fprintln(out, ".text")
-	fmt.Fprintln(out, ".globl _start")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "_start:")
-	c.emitExpr(out)
-
-	fmt.Fprintln(out, "  movq $60, %rax       # Syscall: exit")
-	fmt.Fprintln(out, "  xorq %rdi, %rdi      # Exit code: 0")
-	fmt.Fprintln(out, "  syscall              # Call kernel")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, ".bss")
-	fmt.Fprintln(out, ".space 32              # 32-byte buffer for number")
-	fmt.Fprintln(out, "buffer:")
+func (c *Compiler) Compile(w io.Writer) error {
+	fmt.Fprintln(w, ".text")
+	fmt.Fprintln(w, ".globl _start")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "_start:")
+	c.emitExpr(w)
+	fmt.Fprintln(w, "  movq $60, %rax       # Syscall: exit")
+	fmt.Fprintln(w, "  xorq %rdi, %rdi      # Exit code: 0")
+	fmt.Fprintln(w, "  syscall              # Call kernel")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, ".bss")
+	fmt.Fprintln(w, ".space 32              # 32-byte buffer for number")
+	fmt.Fprintln(w, "buffer:")
 	return nil
 }
 
-func (c *Compiler) emitExpr(out *os.File) {
-	c.emitTerm(out)
+func (c *Compiler) emitExpr(w io.Writer) {
+	c.emitTerm(w)
 	for c.peek().Type == TOK_PLUS || c.peek().Type == TOK_MINUS {
 		op := c.consume(c.peek().Type).Type
-		c.emitTerm(out)
-		fmt.Fprintln(out, "  popq %rax            # Get second operand")
-		fmt.Fprintln(out, "  popq %rbx            # Get first operand")
+		c.emitTerm(w)
+		fmt.Fprintln(w, "  popq %rax            # Get second operand")
+		fmt.Fprintln(w, "  popq %rbx            # Get first operand")
 		if op == TOK_PLUS {
-			fmt.Fprintln(out, "  addq %rbx, %rax      # Add them")
+			fmt.Fprintln(w, "  addq %rbx, %rax      # Add them")
 		} else {
-			fmt.Fprintln(out, "  subq %rax, %rbx      # Subtract")
-			fmt.Fprintln(out, "  movq %rbx, %rax      # Result in RAX")
+			fmt.Fprintln(w, "  subq %rax, %rbx      # Subtract")
+			fmt.Fprintln(w, "  movq %rbx, %rax      # Result in RAX")
 
 		}
-		fmt.Fprintln(out, "  pushq %rax           # Save result")
+		fmt.Fprintln(w, "  pushq %rax           # Save result")
 	}
 }
 
@@ -162,7 +160,7 @@ func (c *Compiler) consume(typ TokenType) Token {
 	panic(fmt.Sprintf("expected token type %d\n", typ))
 }
 
-func (c *Compiler) emitFactor(out *os.File) {
+func (c *Compiler) emitFactor(w io.Writer) {
 	if c.peek().Type == TOK_NUM {
 		tok := c.consume(TOK_NUM)
 		_ = tok
@@ -171,28 +169,28 @@ func (c *Compiler) emitFactor(out *os.File) {
 	}
 	if c.peek().Type == TOK_LPAREN {
 		c.consume(TOK_LPAREN)
-		c.emitExpr(out)
+		c.emitExpr(w)
 		c.consume(TOK_RPAREN)
 		return
 	}
 	panic("unexpected token\n")
 }
 
-func (c *Compiler) emitTerm(out *os.File) {
-	c.emitFactor(out)
+func (c *Compiler) emitTerm(w io.Writer) {
+	c.emitFactor(w)
 	for c.peek().Type == TOK_MUL || c.peek().Type == TOK_DIV {
 		op := c.consume(c.peek().Type).Type
-		c.emitFactor(out)
-		fmt.Fprintln(out, "  popq %rax            # Get second operand")
-		fmt.Fprintln(out, "  popq %rbx            # Get first operand")
+		c.emitFactor(w)
+		fmt.Fprintln(w, "  popq %rax            # Get second operand")
+		fmt.Fprintln(w, "  popq %rbx            # Get first operand")
 		if op == TOK_MUL {
-			fmt.Fprintln(out, "  imulq %rbx, %rax     # Multiply")
+			fmt.Fprintln(w, "  imulq %rbx, %rax     # Multiply")
 		} else {
-			fmt.Fprintln(out, "  movq %rax, %rcx      # Save divisor")
-			fmt.Fprintln(out, "  movq %rbx, %rax      # Move dividend to RAX")
-			fmt.Fprintln(out, "  xorq %rdx, %rdx      # Clear RDX for division")
-			fmt.Fprintln(out, "  idivq %rcx           # Divide RDX:RAX by divisor")
+			fmt.Fprintln(w, "  movq %rax, %rcx      # Save divisor")
+			fmt.Fprintln(w, "  movq %rbx, %rax      # Move dividend to RAX")
+			fmt.Fprintln(w, "  xorq %rdx, %rdx      # Clear RDX for division")
+			fmt.Fprintln(w, "  idivq %rcx           # Divide RDX:RAX by divisor")
 		}
-		fmt.Fprintln(out, "  pushq %rax           # Save result")
+		fmt.Fprintln(w, "  pushq %rax           # Save result")
 	}
 }
