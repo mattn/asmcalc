@@ -163,8 +163,8 @@ func (c *Compiler) consume(typ TokenType) Token {
 func (c *Compiler) emitFactor(w io.Writer) {
 	if c.peek().Type == TOK_NUM {
 		tok := c.consume(TOK_NUM)
-		_ = tok
-		// load number into rax and push to stack
+		fmt.Fprintf(w, "  movq $%d, %%rax        # Load number\n", tok.Value)
+		fmt.Fprintln(w, "  pushq %rax           # Push to stack")
 		return
 	}
 	if c.peek().Type == TOK_LPAREN {
