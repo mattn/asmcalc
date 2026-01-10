@@ -145,7 +145,7 @@ func (c *Compiler) Compile(w io.Writer) error {
 	fmt.Fprintln(w, "  syscall                    # Call kernel")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, ".bss")
-	fmt.Fprintln(w, ".space 32              # 32-byte buffer for number")
+	fmt.Fprintln(w, ".space 32                    # 32-byte buffer for number")
 	fmt.Fprintln(w, "buffer:")
 	return nil
 }
@@ -205,16 +205,16 @@ func (c *Compiler) emitTerm(w io.Writer) {
 	for c.peek().Type == TOK_MUL || c.peek().Type == TOK_DIV {
 		op := c.consume(c.peek().Type).Type
 		c.emitFactor(w)
-		fmt.Fprintln(w, "  popq %rax                   # Get second operand")
-		fmt.Fprintln(w, "  popq %rbx                   # Get first operand")
+		fmt.Fprintln(w, "  popq %rax                  # Get second operand")
+		fmt.Fprintln(w, "  popq %rbx                  # Get first operand")
 		if op == TOK_MUL {
-			fmt.Fprintln(w, "  imulq %rbx, %rax            # Multiply")
+			fmt.Fprintln(w, "  imulq %rbx, %rax           # Multiply")
 		} else {
-			fmt.Fprintln(w, "  movq %rax, %rcx             # Save divisor")
-			fmt.Fprintln(w, "  movq %rbx, %rax             # Move dividend to RAX")
+			fmt.Fprintln(w, "  movq %rax, %rcx            # Save divisor")
+			fmt.Fprintln(w, "  movq %rbx, %rax            # Move dividend to RAX")
 			fmt.Fprintln(w, "  xorq %rdx, %rdx      # Clear RDX for division")
 			fmt.Fprintln(w, "  idivq %rcx           # Divide RDX:RAX by divisor")
 		}
-		fmt.Fprintln(w, "  pushq %rax           # Save result")
+		fmt.Fprintln(w, "  pushq %rax                 # Save result")
 	}
 }
