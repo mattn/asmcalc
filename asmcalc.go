@@ -116,9 +116,15 @@ func (c *Compiler) Compile(w io.Writer) error {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "_start:")
 	c.emitExpr(w)
-	fmt.Fprintln(w, "  movq $60, %rax       # Syscall: exit")
-	fmt.Fprintln(w, "  xorq %rdi, %rdi      # Exit code: 0")
-	fmt.Fprintln(w, "  syscall              # Call kernel")
+	fmt.Fprintln(w, "  popq %rax                  # Result on stack -> RAX")
+	fmt.Fprintln(w, "  movq $10, %rbx             # Base 10 for conversion")
+	fmt.Fprintln(w, "  leaq buffer+31(%rip), %rcx # Start at end of buffer")
+	fmt.Fprintln(w, "  movb $10, (%rcx)           # Add newline")
+	fmt.Fprintln(w, "  decq %rcx                  # Move back")
+	fmt.Fprintln(w, "  movb $0, (%rcx)            # Null terminator (unused)")
+	fmt.Fprintln(w, "  movq $60, %rax             # Syscall: exit")
+	fmt.Fprintln(w, "  xorq %rdi, %rdi            # Exit code: 0")
+	fmt.Fprintln(w, "  syscall                    # Call kernel")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, ".bss")
 	fmt.Fprintln(w, ".space 32              # 32-byte buffer for number")
@@ -131,16 +137,16 @@ func (c *Compiler) emitExpr(w io.Writer) {
 	for c.peek().Type == TOK_PLUS || c.peek().Type == TOK_MINUS {
 		op := c.consume(c.peek().Type).Type
 		c.emitTerm(w)
-		fmt.Fprintln(w, "  popq %rax            # Get second operand")
-		fmt.Fprintln(w, "  popq %rbx            # Get first operand")
+		fmt.Fprintln(w, "  popq %rax                  # Get second operand")
+		fmt.Fprintln(w, "  popq %rbx                  # Get first operand")
 		if op == TOK_PLUS {
-			fmt.Fprintln(w, "  addq %rbx, %rax      # Add them")
+			fmt.Fprintln(w, "  addq %rbx, %rax            # Add them")
 		} else {
-			fmt.Fprintln(w, "  subq %rax, %rbx      # Subtract")
-			fmt.Fprintln(w, "  movq %rbx, %rax      # Result in RAX")
+			fmt.Fprintln(w, "  subq %rax, %rbx            # Subtract")
+			fmt.Fprintln(w, "  movq %rbx, %rax            # Result in RAX")
 
 		}
-		fmt.Fprintln(w, "  pushq %rax           # Save result")
+		fmt.Fprintln(w, "  pushq %rax                 # Save result")
 	}
 }
 
@@ -163,8 +169,8 @@ func (c *Compiler) consume(typ TokenType) Token {
 func (c *Compiler) emitFactor(w io.Writer) {
 	if c.peek().Type == TOK_NUM {
 		tok := c.consume(TOK_NUM)
-		fmt.Fprintf(w, "  movq $%d, %%rax        # Load number\n", tok.Value)
-		fmt.Fprintln(w, "  pushq %rax           # Push to stack")
+		fmt.Fprintf(w, "  movq $%d, %%rax              # Load number\n", tok.Value)
+		fmt.Fprintln(w, "  pushq %rax                 # Push to stack")
 		return
 	}
 	if c.peek().Type == TOK_LPAREN {
@@ -181,13 +187,13 @@ func (c *Compiler) emitTerm(w io.Writer) {
 	for c.peek().Type == TOK_MUL || c.peek().Type == TOK_DIV {
 		op := c.consume(c.peek().Type).Type
 		c.emitFactor(w)
-		fmt.Fprintln(w, "  popq %rax            # Get second operand")
-		fmt.Fprintln(w, "  popq %rbx            # Get first operand")
+		fmt.Fprintln(w, "  popq %rax                   # Get second operand")
+		fmt.Fprintln(w, "  popq %rbx                   # Get first operand")
 		if op == TOK_MUL {
-			fmt.Fprintln(w, "  imulq %rbx, %rax     # Multiply")
+			fmt.Fprintln(w, "  imulq %rbx, %rax            # Multiply")
 		} else {
-			fmt.Fprintln(w, "  movq %rax, %rcx      # Save divisor")
-			fmt.Fprintln(w, "  movq %rbx, %rax      # Move dividend to RAX")
+			fmt.Fprintln(w, "  movq %rax, %rcx             # Save divisor")
+			fmt.Fprintln(w, "  movq %rbx, %rax             # Move dividend to RAX")
 			fmt.Fprintln(w, "  xorq %rdx, %rdx      # Clear RDX for division")
 			fmt.Fprintln(w, "  idivq %rcx           # Divide RDX:RAX by divisor")
 		}
