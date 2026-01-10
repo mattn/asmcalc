@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -63,6 +64,9 @@ func TestCompile(t *testing.T) {
 			asmFile := filepath.Join(tmpDir, "test.s")
 			objFile := filepath.Join(tmpDir, "test.o")
 			exeFile := filepath.Join(tmpDir, "test")
+			if runtime.GOOS == "windows" {
+				exeFile += ".exe"
+			}
 
 			defer func() {
 				os.Remove(asmFile)
@@ -79,7 +83,12 @@ func TestCompile(t *testing.T) {
 				t.Fatalf("as failed: %v\n%s", err, out)
 			}
 
-			ldCmd := exec.Command("ld", objFile, "-o", exeFile)
+			var ldCmd *exec.Cmd
+			if runtime.GOOS == "windows" {
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32")
+			} else {
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile)
+			}
 			if out, err := ldCmd.CombinedOutput(); err != nil {
 				t.Fatalf("ld failed: %v\n%s", err, out)
 			}

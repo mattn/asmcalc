@@ -3,6 +3,7 @@ package asmcalc
 import (
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"unicode"
 )
@@ -121,6 +122,14 @@ func (c *Compiler) Eval() int {
 
 func (c *Compiler) Compile(w io.Writer) error {
 	c.tokenPos = 0
+
+	if runtime.GOOS == "windows" {
+		return c.compileWindows(w)
+	}
+	return c.compileLinux(w)
+}
+
+func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, ".text")
 	write(w, ".globl _start")
 	write(w, "")
@@ -155,8 +164,53 @@ func (c *Compiler) Compile(w io.Writer) error {
 	write(w, "  syscall                    # Call kernel")
 	write(w, "")
 	write(w, ".bss")
-	write(w, ".space 32                    # 32-byte buffer for number")
 	write(w, "buffer:")
+	write(w, ".space 32                    # 32-byte buffer for number")
+	return nil
+}
+
+func (c *Compiler) compileWindows(w io.Writer) error {
+	write(w, ".text")
+	write(w, ".globl main")
+	write(w, "")
+	write(w, "main:")
+	write(w, "  subq $56, %rsp             # Shadow space + alignment")
+	c.emitExpr(w)
+	write(w, "  popq %rax                  # Result on stack -> RAX")
+	write(w, "  movq $10, %rbx             # Base 10 for conversion")
+	write(w, "  leaq buffer+31(%rip), %rcx # Start at end of buffer")
+	write(w, "  movb $10, (%rcx)           # Add newline")
+	write(w, "  decq %rcx                  # Move back")
+	write(w, "")
+	write(w, "convert_loop:")
+	write(w, "  xorq %rdx, %rdx            # Clear RDX for division")
+	write(w, "  divq %rbx                  # RAX / 10, remainder in RDX")
+	write(w, "  addb $48, %dl              # Convert to ASCII")
+	write(w, "  movb %dl, (%rcx)           # Store character")
+	write(w, "  decq %rcx                  # Move back in buffer")
+	write(w, "  testq %rax, %rax           # Check if more digits")
+	write(w, "  jnz convert_loop           # Continue if not zero")
+	write(w, "")
+	write(w, "  incq %rcx                  # Move to first digit")
+	write(w, "  movq %rcx, %r12            # Save buffer start")
+	write(w, "  movq $-11, %rcx            # STD_OUTPUT_HANDLE")
+	write(w, "  call GetStdHandle          # Get stdout handle")
+	write(w, "  movq %rax, %rcx            # Handle in RCX")
+	write(w, "  movq %r12, %rdx            # Buffer address")
+	write(w, "  leaq buffer+32(%rip), %r8  # End of buffer")
+	write(w, "  subq %rdx, %r8             # Length")
+	write(w, "  leaq written(%rip), %r9    # Bytes written")
+	write(w, "  movq $0, 32(%rsp)          # lpOverlapped = NULL")
+	write(w, "  call WriteFile             # Write to stdout")
+	write(w, "")
+	write(w, "  xorq %rcx, %rcx            # Exit code 0")
+	write(w, "  call ExitProcess           # Exit")
+	write(w, "")
+	write(w, ".bss")
+	write(w, "buffer:")
+	write(w, ".space 32                    # 32-byte buffer for number")
+	write(w, "written:")
+	write(w, ".space 8                     # Bytes written")
 	return nil
 }
 
