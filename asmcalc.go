@@ -2,6 +2,7 @@ package asmcalc
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"unicode"
 )
@@ -27,11 +28,11 @@ type Token struct {
 	Name  string
 }
 
-type compiler struct {
+type Compiler struct {
 	input    string
 	pos      int
 	tokens   []Token
-	tokenpos int
+	tokenPos int
 }
 
 func lex(input []byte) ([]Token, error) {
@@ -102,4 +103,14 @@ func lex(input []byte) ([]Token, error) {
 	tokens = append(tokens, Token{Type: TOK_EOF})
 
 	return tokens, nil
+}
+
+func compile(input []byte) error {
+	out := os.Stdout
+	fmt.Fprintln(out, ".text")
+	fmt.Fprintln(out, ".globl _start")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "_start:")
+
+	return nil
 }
