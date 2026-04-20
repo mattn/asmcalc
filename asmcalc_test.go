@@ -29,6 +29,7 @@ func TestEval(t *testing.T) {
 		{"$1+5", []int{10}, 15},
 		{"$1*$2", []int{3, 4}, 12},
 		{"x=$1;x*2+1", []int{7}, 15},
+		{"x=$1\ny=$2\nx*y+1\n", []int{6, 7}, 43},
 	}
 
 	for _, tt := range tests {
@@ -61,6 +62,7 @@ func TestCompile(t *testing.T) {
 		{"$1+5", []string{"10"}, 15},
 		{"$1*$2", []string{"3", "4"}, 12},
 		{"x=$1;x*2+1", []string{"7"}, 15},
+		{"x=$1\ny=$2\nx*y+1\n", []string{"6", "7"}, 43},
 	}
 
 	tmpDir := t.TempDir()

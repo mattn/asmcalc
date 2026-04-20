@@ -59,6 +59,11 @@ func (c *Compiler) Lex() {
 
 	for c.pos < len(c.input) {
 		ch := c.input[c.pos]
+		if ch == '\n' {
+			c.tokens = append(c.tokens, Token{Type: TOK_SEMI})
+			c.pos++
+			continue
+		}
 		if unicode.IsSpace(rune(ch)) {
 			c.pos++
 			continue
@@ -142,14 +147,13 @@ func (c *Compiler) Eval(args ...int) int {
 	c.args = args
 	result := 0
 	for {
-		result = c.evalStmt()
-		if c.peek().Type != TOK_SEMI {
-			break
+		for c.peek().Type == TOK_SEMI {
+			c.consume(TOK_SEMI)
 		}
-		c.consume(TOK_SEMI)
 		if c.peek().Type == TOK_EOF {
 			break
 		}
+		result = c.evalStmt()
 	}
 	return result
 }
@@ -179,18 +183,17 @@ func (c *Compiler) Compile(w io.Writer) error {
 func (c *Compiler) emitProgram(w io.Writer) {
 	first := true
 	for {
+		for c.peek().Type == TOK_SEMI {
+			c.consume(TOK_SEMI)
+		}
+		if c.peek().Type == TOK_EOF {
+			break
+		}
 		if !first {
 			write(w, "  popq %rax                  # Discard previous stmt result")
 		}
 		c.emitStmt(w)
 		first = false
-		if c.peek().Type != TOK_SEMI {
-			break
-		}
-		c.consume(TOK_SEMI)
-		if c.peek().Type == TOK_EOF {
-			break
-		}
 	}
 }
 
