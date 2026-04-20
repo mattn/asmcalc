@@ -21,6 +21,7 @@ const (
 	TOK_IDENT
 	TOK_ASSIGN
 	TOK_SEMI
+	TOK_ARG
 	TOK_EOF
 )
 
@@ -37,6 +38,8 @@ type Compiler struct {
 	tokenPos  int
 	vars      map[string]bool
 	varValues map[string]int
+	args      []int
+	usesArg   bool
 }
 
 func NewCompiler(input string) *Compiler {
@@ -118,14 +121,25 @@ func (c *Compiler) Lex() {
 			c.pos++
 			continue
 		}
+		if ch == '$' {
+			c.pos++
+			value := 0
+			for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
+				value = value*10 + int(c.input[c.pos]-'0')
+				c.pos++
+			}
+			c.tokens = append(c.tokens, Token{Type: TOK_ARG, Value: value})
+			continue
+		}
 		panic(fmt.Sprintf("unknown char: %c", ch))
 	}
 	c.tokens = append(c.tokens, Token{Type: TOK_EOF})
 }
 
-func (c *Compiler) Eval() int {
+func (c *Compiler) Eval(args ...int) int {
 	c.tokenPos = 0
 	c.varValues = map[string]int{}
+	c.args = args
 	result := 0
 	for {
 		result = c.evalStmt()
@@ -154,6 +168,7 @@ func (c *Compiler) evalStmt() int {
 func (c *Compiler) Compile(w io.Writer) error {
 	c.tokenPos = 0
 	c.vars = map[string]bool{}
+	c.usesArg = false
 
 	if runtime.GOOS == "windows" {
 		return c.compileWindows(w)
@@ -204,6 +219,7 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, ".globl _start")
 	write(w, "")
 	write(w, "_start:")
+	write(w, "  movq %rsp, %rbp            # Save argv base")
 	c.emitProgram(w)
 	write(w, "  popq %rax                  # Result on stack -> RAX")
 	write(w, "  movq $10, %rbx             # Base 10 for conversion")
@@ -233,11 +249,42 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, "  xorq %rdi, %rdi            # Exit code: 0")
 	write(w, "  syscall                    # Call kernel")
 	write(w, "")
+	c.emitAtoi(w)
 	write(w, ".bss")
 	write(w, "buffer:")
 	write(w, ".space 32                    # 32-byte buffer for number")
 	c.emitBssVars(w)
 	return nil
+}
+
+func (c *Compiler) emitAtoi(w io.Writer) {
+	if !c.usesArg {
+		return
+	}
+	write(w, "__atoi:")
+	write(w, "  xorq %rax, %rax            # result = 0")
+	write(w, "  xorq %rcx, %rcx            # sign flag = 0")
+	write(w, "  movzbq (%rdi), %rdx")
+	write(w, "  cmpb $45, %dl              # '-'")
+	write(w, "  jne __atoi_loop")
+	write(w, "  movq $1, %rcx              # negative")
+	write(w, "  incq %rdi")
+	write(w, "__atoi_loop:")
+	write(w, "  movzbq (%rdi), %rdx")
+	write(w, "  testb %dl, %dl")
+	write(w, "  jz __atoi_done")
+	write(w, "  subq $48, %rdx             # '0'")
+	write(w, "  imulq $10, %rax")
+	write(w, "  addq %rdx, %rax")
+	write(w, "  incq %rdi")
+	write(w, "  jmp __atoi_loop")
+	write(w, "__atoi_done:")
+	write(w, "  testq %rcx, %rcx")
+	write(w, "  jz __atoi_ret")
+	write(w, "  negq %rax")
+	write(w, "__atoi_ret:")
+	write(w, "  ret")
+	write(w, "")
 }
 
 func (c *Compiler) compileWindows(w io.Writer) error {
@@ -328,6 +375,15 @@ func (c *Compiler) emitFactor(w io.Writer) {
 		write(w, "  pushq %rax                 # Push to stack")
 		return
 	}
+	if c.peek().Type == TOK_ARG {
+		tok := c.consume(TOK_ARG)
+		c.usesArg = true
+		offset := 8 * (tok.Value + 1)
+		write(w, fmt.Sprintf("  movq %d(%%rbp), %%rdi         # Load argv[%d]", offset, tok.Value))
+		write(w, "  call __atoi                # Parse as integer")
+		write(w, "  pushq %rax                 # Push to stack")
+		return
+	}
 	if c.peek().Type == TOK_IDENT {
 		tok := c.consume(TOK_IDENT)
 		c.vars[tok.Name] = true
@@ -395,6 +451,13 @@ func (c *Compiler) evalFactor() int {
 	if c.peek().Type == TOK_NUM {
 		tok := c.consume(TOK_NUM)
 		return tok.Value
+	}
+	if c.peek().Type == TOK_ARG {
+		tok := c.consume(TOK_ARG)
+		if tok.Value < 1 || tok.Value > len(c.args) {
+			panic(fmt.Sprintf("arg $%d not provided", tok.Value))
+		}
+		return c.args[tok.Value-1]
 	}
 	if c.peek().Type == TOK_IDENT {
 		tok := c.consume(TOK_IDENT)

@@ -14,24 +14,28 @@ import (
 func TestEval(t *testing.T) {
 	tests := []struct {
 		expr string
+		args []int
 		want int
 	}{
-		{"1+2", 3},
-		{"2+3*4", 14},
-		{"(2+3)*4", 20},
-		{"20/4+2", 7},
-		{"1+2-3+4", 4},
-		{"10-2*3", 4},
-		{"x=10;x+5", 15},
-		{"x=2;y=3;x*y+1", 7},
-		{"x=5;x=x+1;x*2", 12},
+		{"1+2", nil, 3},
+		{"2+3*4", nil, 14},
+		{"(2+3)*4", nil, 20},
+		{"20/4+2", nil, 7},
+		{"1+2-3+4", nil, 4},
+		{"10-2*3", nil, 4},
+		{"x=10;x+5", nil, 15},
+		{"x=2;y=3;x*y+1", nil, 7},
+		{"x=5;x=x+1;x*2", nil, 12},
+		{"$1+5", []int{10}, 15},
+		{"$1*$2", []int{3, 4}, 12},
+		{"x=$1;x*2+1", []int{7}, 15},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
 			compiler := NewCompiler(tt.expr)
 			compiler.Lex()
-			got := compiler.Eval()
+			got := compiler.Eval(tt.args...)
 			if got != tt.want {
 				t.Errorf("Eval(%q) = %d, want %d", tt.expr, got, tt.want)
 			}
@@ -42,17 +46,21 @@ func TestEval(t *testing.T) {
 func TestCompile(t *testing.T) {
 	tests := []struct {
 		expr string
+		args []string
 		want int
 	}{
-		{"1+2", 3},
-		{"2+3*4", 14},
-		{"(2+3)*4", 20},
-		{"20/4+2", 7},
-		{"1+2-3+4", 4},
-		{"10-2*3", 4},
-		{"x=10;x+5", 15},
-		{"x=2;y=3;x*y+1", 7},
-		{"x=5;x=x+1;x*2", 12},
+		{"1+2", nil, 3},
+		{"2+3*4", nil, 14},
+		{"(2+3)*4", nil, 20},
+		{"20/4+2", nil, 7},
+		{"1+2-3+4", nil, 4},
+		{"10-2*3", nil, 4},
+		{"x=10;x+5", nil, 15},
+		{"x=2;y=3;x*y+1", nil, 7},
+		{"x=5;x=x+1;x*2", nil, 12},
+		{"$1+5", []string{"10"}, 15},
+		{"$1*$2", []string{"3", "4"}, 12},
+		{"x=$1;x*2+1", []string{"7"}, 15},
 	}
 
 	tmpDir := t.TempDir()
@@ -99,7 +107,7 @@ func TestCompile(t *testing.T) {
 				t.Fatalf("ld failed: %v\n%s", err, out)
 			}
 
-			runCmd := exec.Command(exeFile)
+			runCmd := exec.Command(exeFile, tt.args...)
 			out, err := runCmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("execution failed: %v\n%s", err, out)
