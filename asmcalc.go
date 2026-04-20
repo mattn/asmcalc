@@ -173,6 +173,12 @@ func (c *Compiler) Compile(w io.Writer) error {
 	c.tokenPos = 0
 	c.vars = map[string]bool{}
 	c.usesArg = false
+	for _, tok := range c.tokens {
+		if tok.Type == TOK_ARG {
+			c.usesArg = true
+			break
+		}
+	}
 
 	if runtime.GOOS == "windows" {
 		return c.compileWindows(w)
@@ -264,6 +270,10 @@ func (c *Compiler) emitAtoi(w io.Writer) {
 	if !c.usesArg {
 		return
 	}
+	if runtime.GOOS == "windows" {
+		c.emitAtoiWide(w)
+		return
+	}
 	write(w, "__atoi:")
 	write(w, "  xorq %rax, %rax            # result = 0")
 	write(w, "  xorq %rcx, %rcx            # sign flag = 0")
@@ -290,12 +300,40 @@ func (c *Compiler) emitAtoi(w io.Writer) {
 	write(w, "")
 }
 
+func (c *Compiler) emitAtoiWide(w io.Writer) {
+	write(w, "__atoi:")
+	write(w, "  xorq %rax, %rax            # result = 0")
+	write(w, "  xorq %rcx, %rcx            # sign flag = 0")
+	write(w, "  movzwl (%rdi), %edx")
+	write(w, "  cmpw $45, %dx              # L'-'")
+	write(w, "  jne __atoi_loop")
+	write(w, "  movq $1, %rcx              # negative")
+	write(w, "  addq $2, %rdi")
+	write(w, "__atoi_loop:")
+	write(w, "  movzwl (%rdi), %edx")
+	write(w, "  testw %dx, %dx")
+	write(w, "  jz __atoi_done")
+	write(w, "  subq $48, %rdx             # L'0'")
+	write(w, "  imulq $10, %rax")
+	write(w, "  addq %rdx, %rax")
+	write(w, "  addq $2, %rdi")
+	write(w, "  jmp __atoi_loop")
+	write(w, "__atoi_done:")
+	write(w, "  testq %rcx, %rcx")
+	write(w, "  jz __atoi_ret")
+	write(w, "  negq %rax")
+	write(w, "__atoi_ret:")
+	write(w, "  ret")
+	write(w, "")
+}
+
 func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, ".text")
 	write(w, ".globl main")
 	write(w, "")
 	write(w, "main:")
 	write(w, "  subq $56, %rsp             # Shadow space + alignment")
+	c.emitWindowsArgvPreamble(w)
 	c.emitProgram(w)
 	write(w, "  popq %rax                  # Result on stack -> RAX")
 	write(w, "  movq $10, %rbx             # Base 10 for conversion")
@@ -327,13 +365,31 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "  xorq %rcx, %rcx            # Exit code 0")
 	write(w, "  call ExitProcess           # Exit")
 	write(w, "")
+	c.emitAtoi(w)
 	write(w, ".bss")
 	write(w, "buffer:")
 	write(w, ".space 32                    # 32-byte buffer for number")
 	write(w, "written:")
 	write(w, ".space 8                     # Bytes written")
+	if c.usesArg {
+		write(w, "argv_ptr:")
+		write(w, ".space 8                     # LPWSTR* argv")
+		write(w, "argc_storage:")
+		write(w, ".space 8                     # int argc")
+	}
 	c.emitBssVars(w)
 	return nil
+}
+
+func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
+	if !c.usesArg {
+		return
+	}
+	write(w, "  call GetCommandLineW       # RAX = LPWSTR")
+	write(w, "  movq %rax, %rcx            # arg1: lpCmdLine")
+	write(w, "  leaq argc_storage(%rip), %rdx  # arg2: pNumArgs")
+	write(w, "  call CommandLineToArgvW    # RAX = LPWSTR*")
+	write(w, "  movq %rax, argv_ptr(%rip)  # Save argv pointer")
 }
 
 func (c *Compiler) emitExpr(w io.Writer) {
@@ -381,8 +437,14 @@ func (c *Compiler) emitFactor(w io.Writer) {
 	if c.peek().Type == TOK_ARG {
 		tok := c.consume(TOK_ARG)
 		c.usesArg = true
-		offset := 8 * (tok.Value + 1)
-		write(w, fmt.Sprintf("  movq %d(%%rbp), %%rdi         # Load argv[%d]", offset, tok.Value))
+		if runtime.GOOS == "windows" {
+			offset := 8 * tok.Value
+			write(w, "  movq argv_ptr(%rip), %rax  # Load argv base")
+			write(w, fmt.Sprintf("  movq %d(%%rax), %%rdi         # Load argv[%d]", offset, tok.Value))
+		} else {
+			offset := 8 * (tok.Value + 1)
+			write(w, fmt.Sprintf("  movq %d(%%rbp), %%rdi         # Load argv[%d]", offset, tok.Value))
+		}
 		write(w, "  call __atoi                # Parse as integer")
 		write(w, "  pushq %rax                 # Push to stack")
 		return

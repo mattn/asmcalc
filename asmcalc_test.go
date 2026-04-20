@@ -101,7 +101,7 @@ func TestCompile(t *testing.T) {
 
 			var ldCmd *exec.Cmd
 			if runtime.GOOS == "windows" {
-				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32")
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32")
 			} else {
 				ldCmd = exec.Command("ld", objFile, "-o", exeFile)
 			}

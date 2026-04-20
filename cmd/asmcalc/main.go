@@ -81,7 +81,7 @@ func runExpr(compiler *asmcalc.Compiler, args []string) error {
 
 	ldArgs := []string{objFile, "-o", exeFile}
 	if runtime.GOOS == "windows" {
-		ldArgs = append(ldArgs, "-lkernel32")
+		ldArgs = append(ldArgs, "-lkernel32", "-lshell32")
 	}
 	if out, err := exec.Command("ld", ldArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("ld failed: %v\n%s", err, out)
