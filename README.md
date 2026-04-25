@@ -1,4 +1,4 @@
-# asmcalc
+# mame
 
 A sample compiler that translates arithmetic expressions into GAS (GNU Assembler) format x86-64 assembly code.
 
@@ -20,7 +20,7 @@ Supports both Linux and Windows platforms.
 ## Building
 
 ```sh
-cd cmd/asmcalc
+cd cmd/mame
 go build
 ```
 
@@ -29,7 +29,7 @@ go build
 Basic usage:
 
 ```sh
-./asmcalc "3*4+5"
+./mame "3*4+5"
 ```
 
 This outputs GAS format assembly code to stdout.
@@ -39,7 +39,7 @@ This outputs GAS format assembly code to stdout.
 To compile the expression to an executable and run it:
 
 ```sh
-./asmcalc "3*4+5" | as -64 - -o out.o
+./mame "3*4+5" | as -64 - -o out.o
 ld out.o -o out
 ./out
 ```
@@ -50,7 +50,7 @@ The output will be `17` (the result of 3*4+5).
 
 ```sh
 trap 'rm -f out.o out' EXIT
-./asmcalc "(2+3)*4" | as -64 - -o out.o
+./mame "(2+3)*4" | as -64 - -o out.o
 ld out.o -o out
 ./out
 ```
@@ -60,7 +60,7 @@ ld out.o -o out
 Run the test script:
 
 ```sh
-cd cmd/asmcalc
+cd cmd/mame
 ./test.sh
 ```
 
@@ -72,15 +72,15 @@ More examples:
 
 ```sh
 # Operator precedence: multiplication before addition
-./asmcalc "2+3*4" | as -64 - -o out.o && ld out.o -o out && ./out
+./mame "2+3*4" | as -64 - -o out.o && ld out.o -o out && ./out
 # Output: 14
 
 # Parentheses for grouping
-./asmcalc "(2+3)*4" | as -64 - -o out.o && ld out.o -o out && ./out
+./mame "(2+3)*4" | as -64 - -o out.o && ld out.o -o out && ./out
 # Output: 20
 
 # Division
-./asmcalc "20/4+2" | as -64 - -o out.o && ld out.o -o out && ./out
+./mame "20/4+2" | as -64 - -o out.o && ld out.o -o out && ./out
 # Output: 7
 ```
 

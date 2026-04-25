@@ -1,4 +1,4 @@
-package asmcalc
+package mame
 
 import (
 	"bytes"

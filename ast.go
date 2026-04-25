@@ -1,4 +1,4 @@
-package asmcalc
+package mame
 
 type Expr interface{ exprNode() }
 type Stmt interface{ stmtNode() }

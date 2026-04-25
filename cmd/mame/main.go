@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/mattn/asmcalc"
+	"github.com/mattn/mame"
 )
 
 func main() {
@@ -28,14 +28,14 @@ func main() {
 		runtimeArgs = flag.Args()
 	} else {
 		if flag.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: asmcalc [-run] [-f file] expr [args...]")
+			fmt.Fprintln(os.Stderr, "usage: mame [-run] [-f file] expr [args...]")
 			os.Exit(1)
 		}
 		expr = flag.Arg(0)
 		runtimeArgs = flag.Args()[1:]
 	}
 
-	compiler := asmcalc.NewCompiler(expr)
+	compiler := mame.NewCompiler(expr)
 	compiler.Lex()
 
 	if !*run {
@@ -49,8 +49,8 @@ func main() {
 	}
 }
 
-func runExpr(compiler *asmcalc.Compiler, args []string) error {
-	tmpDir, err := os.MkdirTemp("", "asmcalc-*")
+func runExpr(compiler *mame.Compiler, args []string) error {
+	tmpDir, err := os.MkdirTemp("", "mame-*")
 	if err != nil {
 		return err
 	}
