@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const commentColumn = 29
+const commentColumn = 32
 
 func write(w io.Writer, code string, comment ...string) {
 	line := code
