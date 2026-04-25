@@ -27,6 +27,8 @@ func main() {
 		cmdRun(args)
 	case "eval":
 		cmdEval(args)
+	case "compile":
+		cmdCompile(args)
 	default:
 		usage()
 		os.Exit(1)
@@ -35,13 +37,13 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
-	fmt.Fprintln(os.Stderr, "  mame asm  [-f file] expr")
-	fmt.Fprintln(os.Stderr, "  mame run  [-f file] expr [args...]")
-	fmt.Fprintln(os.Stderr, "  mame eval [-f file] expr [args...]")
+	fmt.Fprintln(os.Stderr, "  mame asm     [-f file] expr")
+	fmt.Fprintln(os.Stderr, "  mame compile [-o out] [-f file] expr")
+	fmt.Fprintln(os.Stderr, "  mame run     [-f file] expr [args...]")
+	fmt.Fprintln(os.Stderr, "  mame eval    [-f file] expr [args...]")
 }
 
-func loadCompiler(name string, args []string) (*mame.Compiler, []string) {
-	fs := flag.NewFlagSet(name, flag.ExitOnError)
+func loadCompiler(fs *flag.FlagSet, args []string) (*mame.Compiler, []string) {
 	filename := fs.String("f", "", "read expression from file")
 	fs.Parse(args)
 
@@ -57,7 +59,7 @@ func loadCompiler(name string, args []string) (*mame.Compiler, []string) {
 		runtimeArgs = fs.Args()
 	} else {
 		if fs.NArg() < 1 {
-			fmt.Fprintf(os.Stderr, "mame %s: expression required\n", name)
+			fmt.Fprintf(os.Stderr, "mame %s: expression required\n", fs.Name())
 			os.Exit(1)
 		}
 		expr = fs.Arg(0)
@@ -70,12 +72,14 @@ func loadCompiler(name string, args []string) (*mame.Compiler, []string) {
 }
 
 func cmdAsm(args []string) {
-	compiler, _ := loadCompiler("asm", args)
+	fs := flag.NewFlagSet("asm", flag.ExitOnError)
+	compiler, _ := loadCompiler(fs, args)
 	compiler.Compile(os.Stdout)
 }
 
 func cmdEval(args []string) {
-	compiler, runtimeArgs := loadCompiler("eval", args)
+	fs := flag.NewFlagSet("eval", flag.ExitOnError)
+	compiler, runtimeArgs := loadCompiler(fs, args)
 	intArgs := make([]int, len(runtimeArgs))
 	for i, a := range runtimeArgs {
 		n, err := strconv.Atoi(a)
@@ -89,26 +93,63 @@ func cmdEval(args []string) {
 }
 
 func cmdRun(args []string) {
-	compiler, runtimeArgs := loadCompiler("run", args)
-	if err := runExpr(compiler, runtimeArgs); err != nil {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	compiler, runtimeArgs := loadCompiler(fs, args)
+
+	tmpDir, err := os.MkdirTemp("", "mame-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	exeFile := filepath.Join(tmpDir, "out")
+	if runtime.GOOS == "windows" {
+		exeFile += ".exe"
+	}
+
+	if err := buildExe(compiler, exeFile, tmpDir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	cmd := exec.Command(exeFile, runtimeArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func runExpr(compiler *mame.Compiler, args []string) error {
+func cmdCompile(args []string) {
+	fs := flag.NewFlagSet("compile", flag.ExitOnError)
+	output := fs.String("o", defaultOutputName(), "output executable path")
+	compiler, _ := loadCompiler(fs, args)
+
 	tmpDir, err := os.MkdirTemp("", "mame-*")
 	if err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 	defer os.RemoveAll(tmpDir)
 
+	if err := buildExe(compiler, *output, tmpDir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func defaultOutputName() string {
+	if runtime.GOOS == "windows" {
+		return "a.exe"
+	}
+	return "a.out"
+}
+
+func buildExe(compiler *mame.Compiler, exePath, tmpDir string) error {
 	asmFile := filepath.Join(tmpDir, "out.s")
 	objFile := filepath.Join(tmpDir, "out.o")
-	exeFile := filepath.Join(tmpDir, "out")
-	if runtime.GOOS == "windows" {
-		exeFile += ".exe"
-	}
 
 	f, err := os.Create(asmFile)
 	if err != nil {
@@ -126,7 +167,7 @@ func runExpr(compiler *mame.Compiler, args []string) error {
 		return fmt.Errorf("as failed: %v\n%s", err, out)
 	}
 
-	ldArgs := []string{objFile, "-o", exeFile}
+	ldArgs := []string{objFile, "-o", exePath}
 	if runtime.GOOS == "windows" {
 		ldArgs = append(ldArgs, "-lkernel32", "-lshell32")
 	}
@@ -134,8 +175,5 @@ func runExpr(compiler *mame.Compiler, args []string) error {
 		return fmt.Errorf("ld failed: %v\n%s", err, out)
 	}
 
-	cmd := exec.Command(exeFile, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return nil
 }

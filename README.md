@@ -28,13 +28,15 @@ go build ./cmd/mame
 ## Usage
 
 ```
-mame asm  [-f file] expr
-mame run  [-f file] expr [args...]
-mame eval [-f file] expr [args...]
+mame asm     [-f file] expr
+mame compile [-o out] [-f file] expr
+mame run     [-f file] expr [args...]
+mame eval    [-f file] expr [args...]
 ```
 
 - `asm`: prints generated assembly to stdout
-- `run`: compiles, assembles (`as`), links (`ld`), and executes
+- `compile`: assembles (`as`) and links (`ld`) into a standalone executable (default output: `a.out` / `a.exe`)
+- `run`: compiles to a temp executable and runs it immediately
 - `eval`: evaluates in-process via the built-in interpreter (no asm pipeline; useful for quick checks)
 
 ### Quick start
@@ -60,6 +62,14 @@ println(x + y)' > prog.mame
 
 ./mame run -f prog.mame
 # 30
+```
+
+### Compile to a file
+
+```sh
+./mame compile -o hello 'println("Hello")'
+./hello
+# Hello
 ```
 
 ### Manual pipeline
