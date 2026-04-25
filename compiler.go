@@ -68,11 +68,17 @@ func (c *Compiler) evalExpr(e Expr) int {
 			if len(e.Args) != 1 {
 				panic(fmt.Sprintf("println takes 1 arg, got %d", len(e.Args)))
 			}
+			if str, ok := e.Args[0].(*StrLit); ok {
+				fmt.Println(str.Value)
+				return 0
+			}
 			v := c.evalExpr(e.Args[0])
 			fmt.Println(v)
 			return v
 		}
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
+	case *StrLit:
+		panic("string literal can only appear as a println argument")
 	case *BinOp:
 		l := c.evalExpr(e.L)
 		r := c.evalExpr(e.R)

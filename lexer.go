@@ -28,6 +28,7 @@ const (
 	TOK_GE
 	TOK_SEMI
 	TOK_ARG
+	TOK_STRING
 	TOK_EOF
 )
 
@@ -160,6 +161,36 @@ func (c *Compiler) Lex() {
 		if ch == ';' {
 			c.tokens = append(c.tokens, Token{Type: TOK_SEMI})
 			c.pos++
+			continue
+		}
+		if ch == '"' {
+			c.pos++
+			var sb strings.Builder
+			for c.pos < len(c.input) && c.input[c.pos] != '"' {
+				if c.input[c.pos] == '\\' && c.pos+1 < len(c.input) {
+					switch c.input[c.pos+1] {
+					case 'n':
+						sb.WriteByte('\n')
+					case 't':
+						sb.WriteByte('\t')
+					case '\\':
+						sb.WriteByte('\\')
+					case '"':
+						sb.WriteByte('"')
+					default:
+						panic(fmt.Sprintf("unknown escape: \\%c", c.input[c.pos+1]))
+					}
+					c.pos += 2
+					continue
+				}
+				sb.WriteByte(c.input[c.pos])
+				c.pos++
+			}
+			if c.pos >= len(c.input) {
+				panic("unterminated string")
+			}
+			c.pos++
+			c.tokens = append(c.tokens, Token{Type: TOK_STRING, Name: sb.String()})
 			continue
 		}
 		if ch == '$' {

@@ -34,6 +34,9 @@ func TestLex(t *testing.T) {
 		{"(-1)", []TokenType{TOK_LPAREN, TOK_NUM, TOK_RPAREN, TOK_EOF}},
 		{"x=-1", []TokenType{TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_EOF}},
 		{"a-1", []TokenType{TOK_IDENT, TOK_MINUS, TOK_NUM, TOK_EOF}},
+		{`"Fizz"`, []TokenType{TOK_STRING, TOK_EOF}},
+		{`"a\nb"`, []TokenType{TOK_STRING, TOK_EOF}},
+		{`println("Fizz")`, []TokenType{TOK_IDENT, TOK_LPAREN, TOK_STRING, TOK_RPAREN, TOK_EOF}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -50,6 +53,31 @@ func TestLex(t *testing.T) {
 				if got[i] != tt.want[i] {
 					t.Errorf("Lex(%q)[%d] = %d, want %d", tt.input, i, got[i], tt.want[i])
 				}
+			}
+		})
+	}
+}
+
+func TestLexString(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{`"Fizz"`, "Fizz"},
+		{`"a\nb"`, "a\nb"},
+		{`"\\"`, `\`},
+		{`"\""`, `"`},
+		{`"\t"`, "\t"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			c := NewCompiler(tt.input)
+			c.Lex()
+			if c.tokens[0].Type != TOK_STRING {
+				t.Fatalf("Lex(%q) first token = %s, want TOK_STRING", tt.input, c.tokens[0].Type)
+			}
+			if c.tokens[0].Name != tt.want {
+				t.Errorf("Lex(%q) string = %q, want %q", tt.input, c.tokens[0].Name, tt.want)
 			}
 		})
 	}
@@ -77,6 +105,7 @@ func TestEval(t *testing.T) {
 		{"$1*$2", []int{3, 4}, 12},
 		{"x=$1;x*2+1", []int{7}, 15},
 		{"x=$1\ny=$2\nx*y+1\n", []int{6, 7}, 43},
+		{`println("Fizz")`, nil, 0},
 	}
 
 	for _, tt := range tests {

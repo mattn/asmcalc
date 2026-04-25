@@ -4,6 +4,7 @@ type Expr interface{ exprNode() }
 type Stmt interface{ stmtNode() }
 
 type NumLit struct{ Value int }
+type StrLit struct{ Value string }
 type ArgRef struct{ Index int }
 type VarRef struct{ Name string }
 type BinOp struct {
@@ -16,6 +17,7 @@ type CallExpr struct {
 }
 
 func (*NumLit) exprNode()   {}
+func (*StrLit) exprNode()   {}
 func (*ArgRef) exprNode()   {}
 func (*VarRef) exprNode()   {}
 func (*BinOp) exprNode()    {}
@@ -81,6 +83,9 @@ func (c *Compiler) parseTerm() Expr {
 func (c *Compiler) parseFactor() Expr {
 	if c.peek().Type == TOK_NUM {
 		return &NumLit{Value: c.consume(TOK_NUM).Value}
+	}
+	if c.peek().Type == TOK_STRING {
+		return &StrLit{Value: c.consume(TOK_STRING).Name}
 	}
 	if c.peek().Type == TOK_ARG {
 		tok := c.consume(TOK_ARG)
