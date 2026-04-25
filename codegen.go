@@ -62,6 +62,8 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		write(w, "  pushq %rax", "Push to stack")
 	case *CallExpr:
 		c.emitCall(w, e)
+	case *StrLit:
+		panic("string literal can only appear as a println argument")
 	case *BinOp:
 		c.emitExpr(w, e.L)
 		c.emitExpr(w, e.R)
@@ -99,6 +101,23 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		if len(e.Args) != 1 {
 			panic(fmt.Sprintf("println takes 1 arg, got %d", len(e.Args)))
 		}
+		if str, ok := e.Args[0].(*StrLit); ok {
+			idx := len(c.strLits)
+			c.strLits = append(c.strLits, str.Value)
+			c.usesPrintStr = true
+			label := fmt.Sprintf(".Lstr_%d", idx)
+			length := len(str.Value) + 1
+			if runtime.GOOS == "windows" {
+				write(w, fmt.Sprintf("  leaq %s(%%rip), %%rcx", label), "Arg: string ptr")
+				write(w, fmt.Sprintf("  movq $%d, %%rdx", length), "Arg: length")
+			} else {
+				write(w, fmt.Sprintf("  leaq %s(%%rip), %%rdi", label), "Arg: string ptr")
+				write(w, fmt.Sprintf("  movq $%d, %%rsi", length), "Arg: length")
+			}
+			write(w, "  call __println_str", "Print string")
+			write(w, "  pushq $0", "Push dummy expr result")
+			return
+		}
 		c.emitExpr(w, e.Args[0])
 		if runtime.GOOS == "windows" {
 			write(w, "  popq %rcx", "Arg into RCX (aligns RSP)")
@@ -132,6 +151,8 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, "")
 	c.emitAtoi(w)
 	c.emitPrintln(w)
+	c.emitPrintlnStr(w)
+	c.emitData(w)
 	write(w, ".bss")
 	if c.usesPrint {
 		write(w, "buffer:")
@@ -147,6 +168,10 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "")
 	write(w, "main:")
 	write(w, "  subq $56, %rsp", "Shadow space + alignment")
+	if c.usesPrintStr {
+		write(w, "  movq $65001, %rcx", "CP_UTF8")
+		write(w, "  call SetConsoleOutputCP", "Switch console to UTF-8")
+	}
 	c.emitWindowsArgvPreamble(w)
 	c.emitProgram(w)
 	write(w, "  xorq %rcx, %rcx", "Exit code 0")
@@ -154,10 +179,14 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "")
 	c.emitAtoi(w)
 	c.emitPrintln(w)
+	c.emitPrintlnStr(w)
+	c.emitData(w)
 	write(w, ".bss")
 	if c.usesPrint {
 		write(w, "buffer:")
 		write(w, ".space 32", "32-byte buffer for number")
+	}
+	if c.usesPrint || c.usesPrintStr {
 		write(w, "written:")
 		write(w, ".space 8", "Bytes written")
 	}
@@ -329,4 +358,51 @@ func (c *Compiler) emitPrintlnWindows(w io.Writer) {
 	write(w, "  addq $56, %rsp", "Restore stack")
 	write(w, "  ret", "Return")
 	write(w, "")
+}
+
+func (c *Compiler) emitPrintlnStr(w io.Writer) {
+	if !c.usesPrintStr {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		c.emitPrintlnStrWindows(w)
+		return
+	}
+	write(w, "__println_str:")
+	write(w, "  movq %rsi, %rdx", "Length to RDX (syscall arg 3)")
+	write(w, "  movq %rdi, %rsi", "Buffer to RSI (syscall arg 2)")
+	write(w, "  movq $1, %rdi", "Stdout")
+	write(w, "  movq $1, %rax", "Syscall: write")
+	write(w, "  syscall", "Call kernel")
+	write(w, "  ret", "Return")
+	write(w, "")
+}
+
+func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
+	write(w, "__println_str:")
+	write(w, "  subq $56, %rsp", "Shadow + 5th arg + spill")
+	write(w, "  movq %rcx, 40(%rsp)", "Spill string ptr")
+	write(w, "  movq %rdx, 48(%rsp)", "Spill length")
+	write(w, "  movq $-11, %rcx", "STD_OUTPUT_HANDLE")
+	write(w, "  call GetStdHandle", "Get stdout handle")
+	write(w, "  movq %rax, %rcx", "Handle")
+	write(w, "  movq 40(%rsp), %rdx", "Buffer ptr")
+	write(w, "  movq 48(%rsp), %r8", "Length")
+	write(w, "  leaq written(%rip), %r9", "Bytes written")
+	write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
+	write(w, "  call WriteFile", "Write to stdout")
+	write(w, "  addq $56, %rsp", "Restore stack")
+	write(w, "  ret", "Return")
+	write(w, "")
+}
+
+func (c *Compiler) emitData(w io.Writer) {
+	if len(c.strLits) == 0 {
+		return
+	}
+	write(w, ".data")
+	for i, s := range c.strLits {
+		write(w, fmt.Sprintf(".Lstr_%d:", i))
+		write(w, fmt.Sprintf(".ascii %q", s+"\n"))
+	}
 }

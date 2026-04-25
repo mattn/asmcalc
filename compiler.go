@@ -7,16 +7,18 @@ import (
 )
 
 type Compiler struct {
-	input     string
-	pos       int
-	tokens    []Token
-	tokenPos  int
-	program   *Program
-	vars      map[string]bool
-	varValues map[string]int
-	args      []int
-	usesArg   bool
-	usesPrint bool
+	input        string
+	pos          int
+	tokens       []Token
+	tokenPos     int
+	program      *Program
+	vars         map[string]bool
+	varValues    map[string]int
+	args         []int
+	usesArg      bool
+	usesPrint    bool
+	usesPrintStr bool
+	strLits      []string
 }
 
 func NewCompiler(input string) *Compiler {
@@ -103,6 +105,7 @@ func (c *Compiler) Compile(w io.Writer) error {
 		c.Parse()
 	}
 	c.vars = map[string]bool{}
+	c.strLits = nil
 
 	if runtime.GOOS == "windows" {
 		return c.compileWindows(w)

@@ -37,6 +37,8 @@ type Program struct{ Stmts []Stmt }
 func (c *Compiler) Parse() *Program {
 	c.tokenPos = 0
 	c.usesArg = false
+	c.usesPrint = false
+	c.usesPrintStr = false
 	prog := &Program{}
 	for {
 		for c.peek().Type == TOK_SEMI {
@@ -101,8 +103,12 @@ func (c *Compiler) parseFactor() Expr {
 				args = append(args, c.parseExpr())
 			}
 			c.consume(TOK_RPAREN)
-			if name == "println" {
-				c.usesPrint = true
+			if name == "println" && len(args) == 1 {
+				if _, ok := args[0].(*StrLit); ok {
+					c.usesPrintStr = true
+				} else {
+					c.usesPrint = true
+				}
 			}
 			return &CallExpr{Name: name, Args: args}
 		}
