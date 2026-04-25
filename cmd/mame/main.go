@@ -13,15 +13,37 @@ import (
 )
 
 func main() {
-	filename := flag.String("f", "", "read expression from file")
-	run := flag.Bool("run", false, "compile and run the expression")
-	eval := flag.Bool("eval", false, "evaluate the expression in-process (no asm pipeline)")
-	flag.Parse()
-
-	if *run && *eval {
-		fmt.Fprintln(os.Stderr, "-run and -eval are mutually exclusive")
+	if len(os.Args) < 2 {
+		usage()
 		os.Exit(1)
 	}
+	sub := os.Args[1]
+	args := os.Args[2:]
+
+	switch sub {
+	case "asm":
+		cmdAsm(args)
+	case "run":
+		cmdRun(args)
+	case "eval":
+		cmdEval(args)
+	default:
+		usage()
+		os.Exit(1)
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage:")
+	fmt.Fprintln(os.Stderr, "  mame asm  [-f file] expr")
+	fmt.Fprintln(os.Stderr, "  mame run  [-f file] expr [args...]")
+	fmt.Fprintln(os.Stderr, "  mame eval [-f file] expr [args...]")
+}
+
+func loadCompiler(name string, args []string) (*mame.Compiler, []string) {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	filename := fs.String("f", "", "read expression from file")
+	fs.Parse(args)
 
 	var expr string
 	var runtimeArgs []string
@@ -32,38 +54,42 @@ func main() {
 			os.Exit(1)
 		}
 		expr = string(b)
-		runtimeArgs = flag.Args()
+		runtimeArgs = fs.Args()
 	} else {
-		if flag.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: mame [-run|-eval] [-f file] expr [args...]")
+		if fs.NArg() < 1 {
+			fmt.Fprintf(os.Stderr, "mame %s: expression required\n", name)
 			os.Exit(1)
 		}
-		expr = flag.Arg(0)
-		runtimeArgs = flag.Args()[1:]
+		expr = fs.Arg(0)
+		runtimeArgs = fs.Args()[1:]
 	}
 
 	compiler := mame.NewCompiler(expr)
 	compiler.Lex()
+	return compiler, runtimeArgs
+}
 
-	if *eval {
-		intArgs := make([]int, len(runtimeArgs))
-		for i, a := range runtimeArgs {
-			n, err := strconv.Atoi(a)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "arg $%d: %v\n", i+1, err)
-				os.Exit(1)
-			}
-			intArgs[i] = n
+func cmdAsm(args []string) {
+	compiler, _ := loadCompiler("asm", args)
+	compiler.Compile(os.Stdout)
+}
+
+func cmdEval(args []string) {
+	compiler, runtimeArgs := loadCompiler("eval", args)
+	intArgs := make([]int, len(runtimeArgs))
+	for i, a := range runtimeArgs {
+		n, err := strconv.Atoi(a)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "arg $%d: %v\n", i+1, err)
+			os.Exit(1)
 		}
-		compiler.Eval(intArgs...)
-		return
+		intArgs[i] = n
 	}
+	compiler.Eval(intArgs...)
+}
 
-	if !*run {
-		compiler.Compile(os.Stdout)
-		return
-	}
-
+func cmdRun(args []string) {
+	compiler, runtimeArgs := loadCompiler("run", args)
 	if err := runExpr(compiler, runtimeArgs); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

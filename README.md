@@ -28,24 +28,26 @@ go build ./cmd/mame
 ## Usage
 
 ```
-mame [-run|-eval] [-f file] expr [args...]
+mame asm  [-f file] expr
+mame run  [-f file] expr [args...]
+mame eval [-f file] expr [args...]
 ```
 
-- default: prints generated assembly to stdout
-- `-run`: compiles, assembles (`as`), links (`ld`), and executes
-- `-eval`: evaluates in-process via the built-in interpreter (no asm pipeline; useful for quick checks)
+- `asm`: prints generated assembly to stdout
+- `run`: compiles, assembles (`as`), links (`ld`), and executes
+- `eval`: evaluates in-process via the built-in interpreter (no asm pipeline; useful for quick checks)
 
 ### Quick start
 
 ```sh
-./mame -run 'println(3*4+5)'
+./mame run 'println(3*4+5)'
 # 17
 ```
 
 ### Pass arguments
 
 ```sh
-./mame -run 'println($1 * $2)' 6 7
+./mame run 'println($1 * $2)' 6 7
 # 42
 ```
 
@@ -56,14 +58,14 @@ echo 'x = 10
 y = 20
 println(x + y)' > prog.mame
 
-./mame -run -f prog.mame
+./mame run -f prog.mame
 # 30
 ```
 
 ### Manual pipeline
 
 ```sh
-./mame 'println((2+3)*4)' | as -64 - -o out.o
+./mame asm 'println((2+3)*4)' | as -64 - -o out.o
 ld out.o -o out                  # Linux
 # ld out.o -o out.exe -lkernel32 -lshell32   # Windows
 ./out
@@ -73,9 +75,10 @@ ld out.o -o out                  # Linux
 ## Examples
 
 ```sh
-./mame -run 'println(10 % 3)'           # 1
-./mame -run 'x = 5; println(x * x)'     # 25
-./mame -run 'println($1 + 1)' 41        # 42
+./mame run 'println(10 % 3)'           # 1
+./mame run 'x = 5; println(x * x)'     # 25
+./mame run 'println($1 + 1)' 41        # 42
+./mame run 'print("Fizz");println("Buzz")'   # FizzBuzz
 ```
 
 ## How it works
