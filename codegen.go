@@ -88,11 +88,29 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 			write(w, "  cqto", "Sign-extend RAX into RDX")
 			write(w, "  idivq %rcx", "RDX = remainder")
 			write(w, "  movq %rdx, %rax", "Result = remainder")
+		case TOK_EQ:
+			c.emitCmpSet(w, "sete", "L == R")
+		case TOK_NE:
+			c.emitCmpSet(w, "setne", "L != R")
+		case TOK_LT:
+			c.emitCmpSet(w, "setl", "L < R")
+		case TOK_LE:
+			c.emitCmpSet(w, "setle", "L <= R")
+		case TOK_GT:
+			c.emitCmpSet(w, "setg", "L > R")
+		case TOK_GE:
+			c.emitCmpSet(w, "setge", "L >= R")
 		}
 		write(w, "  pushq %rax", "Save result")
 	default:
 		panic("unknown expr")
 	}
+}
+
+func (c *Compiler) emitCmpSet(w io.Writer, setcc, comment string) {
+	write(w, "  cmpq %rax, %rbx", "Compare L vs R")
+	write(w, "  "+setcc+" %al", comment)
+	write(w, "  movzbq %al, %rax", "Zero-extend to 64-bit")
 }
 
 func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {

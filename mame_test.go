@@ -106,6 +106,16 @@ func TestEval(t *testing.T) {
 		{"x=$1;x*2+1", []int{7}, 15},
 		{"x=$1\ny=$2\nx*y+1\n", []int{6, 7}, 43},
 		{`println("Fizz")`, nil, 0},
+		{"1==1", nil, 1},
+		{"1==2", nil, 0},
+		{"1!=2", nil, 1},
+		{"3<5", nil, 1},
+		{"5<=5", nil, 1},
+		{"5>5", nil, 0},
+		{"5>=5", nil, 1},
+		{"15%3==0", nil, 1},
+		{"15%4==0", nil, 0},
+		{"1+2==3", nil, 1},
 	}
 
 	for _, tt := range tests {
@@ -142,6 +152,11 @@ func TestCompile(t *testing.T) {
 		{"println($1*$2)", []string{"3", "4"}, 12},
 		{"x=$1;println(x*2+1)", []string{"7"}, 15},
 		{"x=$1\ny=$2\nprintln(x*y+1)\n", []string{"6", "7"}, 43},
+		{"println(1==1)", nil, 1},
+		{"println(1==2)", nil, 0},
+		{"println(15%3==0)", nil, 1},
+		{"println(7<5)", nil, 0},
+		{"println(3>=3)", nil, 1},
 	}
 
 	tmpDir := t.TempDir()

@@ -63,6 +63,20 @@ func (c *Compiler) parseStmt() Stmt {
 }
 
 func (c *Compiler) parseExpr() Expr {
+	left := c.parseSum()
+	for {
+		t := c.peek().Type
+		if t != TOK_EQ && t != TOK_NE && t != TOK_LT && t != TOK_LE && t != TOK_GT && t != TOK_GE {
+			break
+		}
+		op := c.consume(t).Type
+		right := c.parseSum()
+		left = &BinOp{Op: op, L: left, R: right}
+	}
+	return left
+}
+
+func (c *Compiler) parseSum() Expr {
 	left := c.parseTerm()
 	for c.peek().Type == TOK_PLUS || c.peek().Type == TOK_MINUS {
 		op := c.consume(c.peek().Type).Type

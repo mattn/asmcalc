@@ -95,6 +95,36 @@ func (c *Compiler) evalExpr(e Expr) int {
 			return l / r
 		case TOK_MOD:
 			return l % r
+		case TOK_EQ:
+			if l == r {
+				return 1
+			}
+			return 0
+		case TOK_NE:
+			if l != r {
+				return 1
+			}
+			return 0
+		case TOK_LT:
+			if l < r {
+				return 1
+			}
+			return 0
+		case TOK_LE:
+			if l <= r {
+				return 1
+			}
+			return 0
+		case TOK_GT:
+			if l > r {
+				return 1
+			}
+			return 0
+		case TOK_GE:
+			if l >= r {
+				return 1
+			}
+			return 0
 		}
 	}
 	panic("unknown expr")
