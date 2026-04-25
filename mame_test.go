@@ -27,6 +27,13 @@ func TestLex(t *testing.T) {
 		{"x=1", []TokenType{TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_EOF}},
 		{"1<=2", []TokenType{TOK_NUM, TOK_LE, TOK_NUM, TOK_EOF}},
 		{"a>=b", []TokenType{TOK_IDENT, TOK_GE, TOK_IDENT, TOK_EOF}},
+		{"-1", []TokenType{TOK_NUM, TOK_EOF}},
+		{"- -1", []TokenType{TOK_MINUS, TOK_NUM, TOK_EOF}},
+		{"0--1", []TokenType{TOK_NUM, TOK_MINUS, TOK_MINUS, TOK_NUM, TOK_EOF}},
+		{"0- -1", []TokenType{TOK_NUM, TOK_MINUS, TOK_NUM, TOK_EOF}},
+		{"(-1)", []TokenType{TOK_LPAREN, TOK_NUM, TOK_RPAREN, TOK_EOF}},
+		{"x=-1", []TokenType{TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_EOF}},
+		{"a-1", []TokenType{TOK_IDENT, TOK_MINUS, TOK_NUM, TOK_EOF}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

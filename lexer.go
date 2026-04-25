@@ -75,6 +75,23 @@ func (c *Compiler) Lex() {
 			continue
 		}
 		if ch == '-' {
+			if c.pos+1 < len(c.input) && unicode.IsDigit(rune(c.input[c.pos+1])) {
+				canNeg := c.pos == 0
+				if !canNeg {
+					prev := c.input[c.pos-1]
+					canNeg = !unicode.IsDigit(rune(prev)) && !unicode.IsLetter(rune(prev)) && prev != ')' && prev != '-'
+				}
+				if canNeg {
+					c.pos++
+					value := 0
+					for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
+						value = value*10 + int(c.input[c.pos]-'0')
+						c.pos++
+					}
+					c.tokens = append(c.tokens, Token{Type: TOK_NUM, Value: -value})
+					continue
+				}
+			}
 			c.tokens = append(c.tokens, Token{Type: TOK_MINUS})
 			c.pos++
 			continue
