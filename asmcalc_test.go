@@ -50,19 +50,19 @@ func TestCompile(t *testing.T) {
 		args []string
 		want int
 	}{
-		{"1+2", nil, 3},
-		{"2+3*4", nil, 14},
-		{"(2+3)*4", nil, 20},
-		{"20/4+2", nil, 7},
-		{"1+2-3+4", nil, 4},
-		{"10-2*3", nil, 4},
-		{"x=10;x+5", nil, 15},
-		{"x=2;y=3;x*y+1", nil, 7},
-		{"x=5;x=x+1;x*2", nil, 12},
-		{"$1+5", []string{"10"}, 15},
-		{"$1*$2", []string{"3", "4"}, 12},
-		{"x=$1;x*2+1", []string{"7"}, 15},
-		{"x=$1\ny=$2\nx*y+1\n", []string{"6", "7"}, 43},
+		{"println(1+2)", nil, 3},
+		{"println(2+3*4)", nil, 14},
+		{"println((2+3)*4)", nil, 20},
+		{"println(20/4+2)", nil, 7},
+		{"println(1+2-3+4)", nil, 4},
+		{"println(10-2*3)", nil, 4},
+		{"x=10;println(x+5)", nil, 15},
+		{"x=2;y=3;println(x*y+1)", nil, 7},
+		{"x=5;x=x+1;println(x*2)", nil, 12},
+		{"println($1+5)", []string{"10"}, 15},
+		{"println($1*$2)", []string{"3", "4"}, 12},
+		{"x=$1;println(x*2+1)", []string{"7"}, 15},
+		{"x=$1\ny=$2\nprintln(x*y+1)\n", []string{"6", "7"}, 43},
 	}
 
 	tmpDir := t.TempDir()

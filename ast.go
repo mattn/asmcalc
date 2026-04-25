@@ -10,11 +10,16 @@ type BinOp struct {
 	Op   TokenType
 	L, R Expr
 }
+type CallExpr struct {
+	Name string
+	Args []Expr
+}
 
-func (*NumLit) exprNode() {}
-func (*ArgRef) exprNode() {}
-func (*VarRef) exprNode() {}
-func (*BinOp) exprNode()  {}
+func (*NumLit) exprNode()   {}
+func (*ArgRef) exprNode()   {}
+func (*VarRef) exprNode()   {}
+func (*BinOp) exprNode()    {}
+func (*CallExpr) exprNode() {}
 
 type AssignStmt struct {
 	Name  string
@@ -83,7 +88,20 @@ func (c *Compiler) parseFactor() Expr {
 		return &ArgRef{Index: tok.Value}
 	}
 	if c.peek().Type == TOK_IDENT {
-		return &VarRef{Name: c.consume(TOK_IDENT).Name}
+		name := c.consume(TOK_IDENT).Name
+		if c.peek().Type == TOK_LPAREN {
+			c.consume(TOK_LPAREN)
+			var args []Expr
+			if c.peek().Type != TOK_RPAREN {
+				args = append(args, c.parseExpr())
+			}
+			c.consume(TOK_RPAREN)
+			if name == "println" {
+				c.usesPrint = true
+			}
+			return &CallExpr{Name: name, Args: args}
+		}
+		return &VarRef{Name: name}
 	}
 	if c.peek().Type == TOK_LPAREN {
 		c.consume(TOK_LPAREN)

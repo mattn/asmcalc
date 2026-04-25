@@ -41,6 +41,7 @@ type Compiler struct {
 	varValues map[string]int
 	args      []int
 	usesArg   bool
+	usesPrint bool
 }
 
 func NewCompiler(input string) *Compiler {
@@ -188,6 +189,17 @@ func (c *Compiler) evalExpr(e Expr) int {
 		return c.args[e.Index-1]
 	case *VarRef:
 		return c.varValues[e.Name]
+	case *CallExpr:
+		switch e.Name {
+		case "println":
+			if len(e.Args) != 1 {
+				panic(fmt.Sprintf("println takes 1 arg, got %d", len(e.Args)))
+			}
+			v := c.evalExpr(e.Args[0])
+			fmt.Println(v)
+			return v
+		}
+		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	case *BinOp:
 		l := c.evalExpr(e.L)
 		r := c.evalExpr(e.R)
@@ -218,10 +230,7 @@ func (c *Compiler) Compile(w io.Writer) error {
 }
 
 func (c *Compiler) emitProgram(w io.Writer) {
-	for i, stmt := range c.program.Stmts {
-		if i > 0 {
-			write(w, "  popq %rax", "Discard previous stmt result")
-		}
+	for _, stmt := range c.program.Stmts {
 		c.emitStmt(w, stmt)
 	}
 }
@@ -231,10 +240,11 @@ func (c *Compiler) emitStmt(w io.Writer, s Stmt) {
 	case *AssignStmt:
 		c.vars[s.Name] = true
 		c.emitExpr(w, s.Value)
-		write(w, "  movq (%rsp), %rax", "Read value")
+		write(w, "  popq %rax", "Read value")
 		write(w, fmt.Sprintf("  movq %%rax, var_%s(%%rip)", s.Name), "Store to variable")
 	case *ExprStmt:
 		c.emitExpr(w, s.X)
+		write(w, "  popq %rax", "Discard stmt result")
 	}
 }
 
@@ -252,38 +262,17 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, "_start:")
 	write(w, "  movq %rsp, %rbp", "Save argv base")
 	c.emitProgram(w)
-	write(w, "  popq %rax", "Result on stack -> RAX")
-	write(w, "  movq $10, %rbx", "Base 10 for conversion")
-	write(w, "  leaq buffer+31(%rip), %rcx", "Start at end of buffer")
-	write(w, "  movb $10, (%rcx)", "Add newline")
-	write(w, "  decq %rcx", "Move back")
-	write(w, "  movb $0, (%rcx)", "Null terminator (unused)")
-	write(w, "")
-	write(w, "convert_loop:")
-	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
-	write(w, "  divq %rbx", "RAX / 10, remainder in RDX")
-	write(w, "  addb $48, %dl", "Convert to ASCII")
-	write(w, "  movb %dl, (%rcx)", "Store character")
-	write(w, "  decq %rcx", "Move back in buffer")
-	write(w, "  testq %rax, %rax", "Check if more digits")
-	write(w, "  jnz convert_loop", "Continue if not zero")
-	write(w, "")
-	write(w, "  incq %rcx", "Move to first digit")
-	write(w, "  movq $1, %rax", "Syscall: write")
-	write(w, "  movq $1, %rdi", "File descriptor: stdout")
-	write(w, "  movq %rcx, %rsi", "Buffer address")
-	write(w, "  leaq buffer+32(%rip), %rdx", "End of buffer")
-	write(w, "  subq %rsi, %rdx", "Calculate length")
-	write(w, "  syscall", "Call kernel")
-
 	write(w, "  movq $60, %rax", "Syscall: exit")
 	write(w, "  xorq %rdi, %rdi", "Exit code: 0")
 	write(w, "  syscall", "Call kernel")
 	write(w, "")
 	c.emitAtoi(w)
+	c.emitPrintln(w)
 	write(w, ".bss")
-	write(w, "buffer:")
-	write(w, ".space 32", "32-byte buffer for number")
+	if c.usesPrint {
+		write(w, "buffer:")
+		write(w, ".space 32", "32-byte buffer for number")
+	}
 	c.emitBssVars(w)
 	return nil
 }
@@ -357,42 +346,18 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "  subq $56, %rsp", "Shadow space + alignment")
 	c.emitWindowsArgvPreamble(w)
 	c.emitProgram(w)
-	write(w, "  popq %rax", "Result on stack -> RAX")
-	write(w, "  movq $10, %rbx", "Base 10 for conversion")
-	write(w, "  leaq buffer+31(%rip), %rcx", "Start at end of buffer")
-	write(w, "  movb $10, (%rcx)", "Add newline")
-	write(w, "  decq %rcx", "Move back")
-	write(w, "")
-	write(w, "convert_loop:")
-	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
-	write(w, "  divq %rbx", "RAX / 10, remainder in RDX")
-	write(w, "  addb $48, %dl", "Convert to ASCII")
-	write(w, "  movb %dl, (%rcx)", "Store character")
-	write(w, "  decq %rcx", "Move back in buffer")
-	write(w, "  testq %rax, %rax", "Check if more digits")
-	write(w, "  jnz convert_loop", "Continue if not zero")
-	write(w, "")
-	write(w, "  incq %rcx", "Move to first digit")
-	write(w, "  movq %rcx, %r12", "Save buffer start")
-	write(w, "  movq $-11, %rcx", "STD_OUTPUT_HANDLE")
-	write(w, "  call GetStdHandle", "Get stdout handle")
-	write(w, "  movq %rax, %rcx", "Handle in RCX")
-	write(w, "  movq %r12, %rdx", "Buffer address")
-	write(w, "  leaq buffer+32(%rip), %r8", "End of buffer")
-	write(w, "  subq %rdx, %r8", "Length")
-	write(w, "  leaq written(%rip), %r9", "Bytes written")
-	write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
-	write(w, "  call WriteFile", "Write to stdout")
-	write(w, "")
 	write(w, "  xorq %rcx, %rcx", "Exit code 0")
 	write(w, "  call ExitProcess", "Exit")
 	write(w, "")
 	c.emitAtoi(w)
+	c.emitPrintln(w)
 	write(w, ".bss")
-	write(w, "buffer:")
-	write(w, ".space 32", "32-byte buffer for number")
-	write(w, "written:")
-	write(w, ".space 8", "Bytes written")
+	if c.usesPrint {
+		write(w, "buffer:")
+		write(w, ".space 32", "32-byte buffer for number")
+		write(w, "written:")
+		write(w, ".space 8", "Bytes written")
+	}
 	if c.usesArg {
 		write(w, "argv_ptr:")
 		write(w, ".space 8", "LPWSTR* argv")
@@ -401,6 +366,94 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	}
 	c.emitBssVars(w)
 	return nil
+}
+
+func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
+	switch e.Name {
+	case "println":
+		if len(e.Args) != 1 {
+			panic(fmt.Sprintf("println takes 1 arg, got %d", len(e.Args)))
+		}
+		c.emitExpr(w, e.Args[0])
+		if runtime.GOOS == "windows" {
+			write(w, "  popq %rcx", "Arg into RCX (aligns RSP)")
+		} else {
+			write(w, "  popq %rdi", "Arg into RDI (aligns RSP)")
+		}
+		write(w, "  call __println_int", "Print value, returns it in RAX")
+		write(w, "  pushq %rax", "Push return value as expr result")
+	default:
+		panic(fmt.Sprintf("unknown function: %s", e.Name))
+	}
+}
+
+func (c *Compiler) emitPrintln(w io.Writer) {
+	if !c.usesPrint {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		c.emitPrintlnWindows(w)
+		return
+	}
+	write(w, "__println_int:")
+	write(w, "  movq %rdi, %r10", "Save input value (preserved across syscall)")
+	write(w, "  movq %rdi, %rax", "Value for division")
+	write(w, "  movq $10, %r8", "Base 10")
+	write(w, "  leaq buffer+31(%rip), %r9", "End of buffer")
+	write(w, "  movb $10, (%r9)", "Newline")
+	write(w, "  decq %r9", "Move back")
+	write(w, ".Lpli_conv:")
+	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
+	write(w, "  divq %r8", "RAX / 10")
+	write(w, "  addb $48, %dl", "Digit to ASCII")
+	write(w, "  movb %dl, (%r9)", "Store digit")
+	write(w, "  decq %r9", "Move back")
+	write(w, "  testq %rax, %rax", "More digits?")
+	write(w, "  jnz .Lpli_conv", "Continue")
+	write(w, "  incq %r9", "First digit")
+	write(w, "  movq $1, %rax", "Syscall: write")
+	write(w, "  movq $1, %rdi", "Stdout")
+	write(w, "  movq %r9, %rsi", "Buffer")
+	write(w, "  leaq buffer+32(%rip), %rdx")
+	write(w, "  subq %r9, %rdx", "Length")
+	write(w, "  syscall", "Call kernel")
+	write(w, "  movq %r10, %rax", "Return original value")
+	write(w, "  ret")
+	write(w, "")
+}
+
+func (c *Compiler) emitPrintlnWindows(w io.Writer) {
+	write(w, "__println_int:")
+	write(w, "  subq $56, %rsp", "Shadow + 5th arg + spill, keep RSP aligned")
+	write(w, "  movq %rcx, 40(%rsp)", "Spill input value")
+	write(w, "  movq %rcx, %rax", "Value for division")
+	write(w, "  movq $10, %r8", "Base 10")
+	write(w, "  leaq buffer+31(%rip), %r9", "End of buffer")
+	write(w, "  movb $10, (%r9)", "Newline")
+	write(w, "  decq %r9", "Move back")
+	write(w, ".Lpli_conv:")
+	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
+	write(w, "  divq %r8", "RAX / 10")
+	write(w, "  addb $48, %dl", "Digit to ASCII")
+	write(w, "  movb %dl, (%r9)", "Store digit")
+	write(w, "  decq %r9", "Move back")
+	write(w, "  testq %rax, %rax", "More digits?")
+	write(w, "  jnz .Lpli_conv", "Continue")
+	write(w, "  incq %r9", "First digit")
+	write(w, "  movq %r9, 48(%rsp)", "Spill buffer ptr across GetStdHandle")
+	write(w, "  movq $-11, %rcx", "STD_OUTPUT_HANDLE")
+	write(w, "  call GetStdHandle", "Get stdout handle")
+	write(w, "  movq %rax, %rcx", "Handle")
+	write(w, "  movq 48(%rsp), %rdx", "Buffer ptr")
+	write(w, "  leaq buffer+32(%rip), %r8")
+	write(w, "  subq %rdx, %r8", "Length")
+	write(w, "  leaq written(%rip), %r9", "Bytes written")
+	write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
+	write(w, "  call WriteFile", "Write to stdout")
+	write(w, "  movq 40(%rsp), %rax", "Return original value")
+	write(w, "  addq $56, %rsp")
+	write(w, "  ret")
+	write(w, "")
 }
 
 func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
@@ -434,6 +487,8 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		c.vars[e.Name] = true
 		write(w, fmt.Sprintf("  movq var_%s(%%rip), %%rax", e.Name), "Load variable")
 		write(w, "  pushq %rax", "Push to stack")
+	case *CallExpr:
+		c.emitCall(w, e)
 	case *BinOp:
 		c.emitExpr(w, e.L)
 		c.emitExpr(w, e.R)
