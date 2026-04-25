@@ -6,6 +6,7 @@ import (
 	"unicode"
 )
 
+//go:generate stringer -type=TokenType
 type TokenType int
 
 const (
@@ -189,5 +190,5 @@ func (c *Compiler) consume(typ TokenType) Token {
 		c.tokenPos++
 		return tok
 	}
-	panic(fmt.Sprintf("expected token type %d", typ))
+	panic(fmt.Sprintf("expected %s, got %s", typ, c.peek().Type))
 }
