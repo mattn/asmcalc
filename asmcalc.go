@@ -36,6 +36,7 @@ type Compiler struct {
 	pos       int
 	tokens    []Token
 	tokenPos  int
+	program   *Program
 	vars      map[string]bool
 	varValues map[string]int
 	args      []int
@@ -49,8 +50,18 @@ func NewCompiler(input string) *Compiler {
 	}
 }
 
-func write(w io.Writer, s string) {
-	w.Write([]byte(s + "\n"))
+const commentColumn = 29
+
+func write(w io.Writer, code string, comment ...string) {
+	line := code
+	if len(comment) > 0 && comment[0] != "" {
+		pad := commentColumn - len(line)
+		if pad < 1 {
+			pad = 1
+		}
+		line += strings.Repeat(" ", pad) + "# " + comment[0]
+	}
+	w.Write([]byte(line + "\n"))
 }
 
 func (c *Compiler) Lex() {
@@ -142,43 +153,63 @@ func (c *Compiler) Lex() {
 }
 
 func (c *Compiler) Eval(args ...int) int {
-	c.tokenPos = 0
+	if c.program == nil {
+		c.Parse()
+	}
 	c.varValues = map[string]int{}
 	c.args = args
 	result := 0
-	for {
-		for c.peek().Type == TOK_SEMI {
-			c.consume(TOK_SEMI)
-		}
-		if c.peek().Type == TOK_EOF {
-			break
-		}
-		result = c.evalStmt()
+	for _, stmt := range c.program.Stmts {
+		result = c.evalStmt(stmt)
 	}
 	return result
 }
 
-func (c *Compiler) evalStmt() int {
-	if c.peek().Type == TOK_IDENT && c.tokenPos+1 < len(c.tokens) && c.tokens[c.tokenPos+1].Type == TOK_ASSIGN {
-		name := c.consume(TOK_IDENT).Name
-		c.consume(TOK_ASSIGN)
-		val := c.evalExpr()
-		c.varValues[name] = val
-		return val
+func (c *Compiler) evalStmt(s Stmt) int {
+	switch s := s.(type) {
+	case *AssignStmt:
+		v := c.evalExpr(s.Value)
+		c.varValues[s.Name] = v
+		return v
+	case *ExprStmt:
+		return c.evalExpr(s.X)
 	}
-	return c.evalExpr()
+	panic("unknown stmt")
+}
+
+func (c *Compiler) evalExpr(e Expr) int {
+	switch e := e.(type) {
+	case *NumLit:
+		return e.Value
+	case *ArgRef:
+		if e.Index < 1 || e.Index > len(c.args) {
+			panic(fmt.Sprintf("arg $%d not provided", e.Index))
+		}
+		return c.args[e.Index-1]
+	case *VarRef:
+		return c.varValues[e.Name]
+	case *BinOp:
+		l := c.evalExpr(e.L)
+		r := c.evalExpr(e.R)
+		switch e.Op {
+		case TOK_PLUS:
+			return l + r
+		case TOK_MINUS:
+			return l - r
+		case TOK_MUL:
+			return l * r
+		case TOK_DIV:
+			return l / r
+		}
+	}
+	panic("unknown expr")
 }
 
 func (c *Compiler) Compile(w io.Writer) error {
-	c.tokenPos = 0
-	c.vars = map[string]bool{}
-	c.usesArg = false
-	for _, tok := range c.tokens {
-		if tok.Type == TOK_ARG {
-			c.usesArg = true
-			break
-		}
+	if c.program == nil {
+		c.Parse()
 	}
+	c.vars = map[string]bool{}
 
 	if runtime.GOOS == "windows" {
 		return c.compileWindows(w)
@@ -187,39 +218,30 @@ func (c *Compiler) Compile(w io.Writer) error {
 }
 
 func (c *Compiler) emitProgram(w io.Writer) {
-	first := true
-	for {
-		for c.peek().Type == TOK_SEMI {
-			c.consume(TOK_SEMI)
+	for i, stmt := range c.program.Stmts {
+		if i > 0 {
+			write(w, "  popq %rax", "Discard previous stmt result")
 		}
-		if c.peek().Type == TOK_EOF {
-			break
-		}
-		if !first {
-			write(w, "  popq %rax                  # Discard previous stmt result")
-		}
-		c.emitStmt(w)
-		first = false
+		c.emitStmt(w, stmt)
 	}
 }
 
-func (c *Compiler) emitStmt(w io.Writer) {
-	if c.peek().Type == TOK_IDENT && c.tokenPos+1 < len(c.tokens) && c.tokens[c.tokenPos+1].Type == TOK_ASSIGN {
-		name := c.consume(TOK_IDENT).Name
-		c.consume(TOK_ASSIGN)
-		c.vars[name] = true
-		c.emitExpr(w)
-		write(w, "  movq (%rsp), %rax          # Read value")
-		write(w, fmt.Sprintf("  movq %%rax, var_%s(%%rip)     # Store to variable", name))
-		return
+func (c *Compiler) emitStmt(w io.Writer, s Stmt) {
+	switch s := s.(type) {
+	case *AssignStmt:
+		c.vars[s.Name] = true
+		c.emitExpr(w, s.Value)
+		write(w, "  movq (%rsp), %rax", "Read value")
+		write(w, fmt.Sprintf("  movq %%rax, var_%s(%%rip)", s.Name), "Store to variable")
+	case *ExprStmt:
+		c.emitExpr(w, s.X)
 	}
-	c.emitExpr(w)
 }
 
 func (c *Compiler) emitBssVars(w io.Writer) {
 	for name := range c.vars {
 		write(w, fmt.Sprintf("var_%s:", name))
-		write(w, ".space 8                     # Variable storage")
+		write(w, ".space 8", "Variable storage")
 	}
 }
 
@@ -228,40 +250,40 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, ".globl _start")
 	write(w, "")
 	write(w, "_start:")
-	write(w, "  movq %rsp, %rbp            # Save argv base")
+	write(w, "  movq %rsp, %rbp", "Save argv base")
 	c.emitProgram(w)
-	write(w, "  popq %rax                  # Result on stack -> RAX")
-	write(w, "  movq $10, %rbx             # Base 10 for conversion")
-	write(w, "  leaq buffer+31(%rip), %rcx # Start at end of buffer")
-	write(w, "  movb $10, (%rcx)           # Add newline")
-	write(w, "  decq %rcx                  # Move back")
-	write(w, "  movb $0, (%rcx)            # Null terminator (unused)")
+	write(w, "  popq %rax", "Result on stack -> RAX")
+	write(w, "  movq $10, %rbx", "Base 10 for conversion")
+	write(w, "  leaq buffer+31(%rip), %rcx", "Start at end of buffer")
+	write(w, "  movb $10, (%rcx)", "Add newline")
+	write(w, "  decq %rcx", "Move back")
+	write(w, "  movb $0, (%rcx)", "Null terminator (unused)")
 	write(w, "")
 	write(w, "convert_loop:")
-	write(w, "  xorq %rdx, %rdx            # Clear RDX for division")
-	write(w, "  divq %rbx                  # RAX / 10, remainder in RDX")
-	write(w, "  addb $48, %dl              # Convert to ASCII")
-	write(w, "  movb %dl, (%rcx)           # Store character")
-	write(w, "  decq %rcx                  # Move back in buffer")
-	write(w, "  testq %rax, %rax           # Check if more digits")
-	write(w, "  jnz convert_loop           # Continue if not zero")
+	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
+	write(w, "  divq %rbx", "RAX / 10, remainder in RDX")
+	write(w, "  addb $48, %dl", "Convert to ASCII")
+	write(w, "  movb %dl, (%rcx)", "Store character")
+	write(w, "  decq %rcx", "Move back in buffer")
+	write(w, "  testq %rax, %rax", "Check if more digits")
+	write(w, "  jnz convert_loop", "Continue if not zero")
 	write(w, "")
-	write(w, "  incq %rcx                  # Move to first digit")
-	write(w, "  movq $1, %rax              # Syscall: write")
-	write(w, "  movq $1, %rdi              # File descriptor: stdout")
-	write(w, "  movq %rcx, %rsi            # Buffer address")
-	write(w, "  leaq buffer+32(%rip), %rdx # End of buffer")
-	write(w, "  subq %rsi, %rdx            # Calculate length")
-	write(w, "  syscall                    # Call kernel")
+	write(w, "  incq %rcx", "Move to first digit")
+	write(w, "  movq $1, %rax", "Syscall: write")
+	write(w, "  movq $1, %rdi", "File descriptor: stdout")
+	write(w, "  movq %rcx, %rsi", "Buffer address")
+	write(w, "  leaq buffer+32(%rip), %rdx", "End of buffer")
+	write(w, "  subq %rsi, %rdx", "Calculate length")
+	write(w, "  syscall", "Call kernel")
 
-	write(w, "  movq $60, %rax             # Syscall: exit")
-	write(w, "  xorq %rdi, %rdi            # Exit code: 0")
-	write(w, "  syscall                    # Call kernel")
+	write(w, "  movq $60, %rax", "Syscall: exit")
+	write(w, "  xorq %rdi, %rdi", "Exit code: 0")
+	write(w, "  syscall", "Call kernel")
 	write(w, "")
 	c.emitAtoi(w)
 	write(w, ".bss")
 	write(w, "buffer:")
-	write(w, ".space 32                    # 32-byte buffer for number")
+	write(w, ".space 32", "32-byte buffer for number")
 	c.emitBssVars(w)
 	return nil
 }
@@ -275,18 +297,18 @@ func (c *Compiler) emitAtoi(w io.Writer) {
 		return
 	}
 	write(w, "__atoi:")
-	write(w, "  xorq %rax, %rax            # result = 0")
-	write(w, "  xorq %rcx, %rcx            # sign flag = 0")
+	write(w, "  xorq %rax, %rax", "result = 0")
+	write(w, "  xorq %rcx, %rcx", "sign flag = 0")
 	write(w, "  movzbq (%rdi), %rdx")
-	write(w, "  cmpb $45, %dl              # '-'")
+	write(w, "  cmpb $45, %dl", "'-'")
 	write(w, "  jne __atoi_loop")
-	write(w, "  movq $1, %rcx              # negative")
+	write(w, "  movq $1, %rcx", "negative")
 	write(w, "  incq %rdi")
 	write(w, "__atoi_loop:")
 	write(w, "  movzbq (%rdi), %rdx")
 	write(w, "  testb %dl, %dl")
 	write(w, "  jz __atoi_done")
-	write(w, "  subq $48, %rdx             # '0'")
+	write(w, "  subq $48, %rdx", "'0'")
 	write(w, "  imulq $10, %rax")
 	write(w, "  addq %rdx, %rax")
 	write(w, "  incq %rdi")
@@ -302,18 +324,18 @@ func (c *Compiler) emitAtoi(w io.Writer) {
 
 func (c *Compiler) emitAtoiWide(w io.Writer) {
 	write(w, "__atoi:")
-	write(w, "  xorq %rax, %rax            # result = 0")
-	write(w, "  xorq %rcx, %rcx            # sign flag = 0")
+	write(w, "  xorq %rax, %rax", "result = 0")
+	write(w, "  xorq %rcx, %rcx", "sign flag = 0")
 	write(w, "  movzwl (%rdi), %edx")
-	write(w, "  cmpw $45, %dx              # L'-'")
+	write(w, "  cmpw $45, %dx", "L'-'")
 	write(w, "  jne __atoi_loop")
-	write(w, "  movq $1, %rcx              # negative")
+	write(w, "  movq $1, %rcx", "negative")
 	write(w, "  addq $2, %rdi")
 	write(w, "__atoi_loop:")
 	write(w, "  movzwl (%rdi), %edx")
 	write(w, "  testw %dx, %dx")
 	write(w, "  jz __atoi_done")
-	write(w, "  subq $48, %rdx             # L'0'")
+	write(w, "  subq $48, %rdx", "L'0'")
 	write(w, "  imulq $10, %rax")
 	write(w, "  addq %rdx, %rax")
 	write(w, "  addq $2, %rdi")
@@ -332,50 +354,50 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, ".globl main")
 	write(w, "")
 	write(w, "main:")
-	write(w, "  subq $56, %rsp             # Shadow space + alignment")
+	write(w, "  subq $56, %rsp", "Shadow space + alignment")
 	c.emitWindowsArgvPreamble(w)
 	c.emitProgram(w)
-	write(w, "  popq %rax                  # Result on stack -> RAX")
-	write(w, "  movq $10, %rbx             # Base 10 for conversion")
-	write(w, "  leaq buffer+31(%rip), %rcx # Start at end of buffer")
-	write(w, "  movb $10, (%rcx)           # Add newline")
-	write(w, "  decq %rcx                  # Move back")
+	write(w, "  popq %rax", "Result on stack -> RAX")
+	write(w, "  movq $10, %rbx", "Base 10 for conversion")
+	write(w, "  leaq buffer+31(%rip), %rcx", "Start at end of buffer")
+	write(w, "  movb $10, (%rcx)", "Add newline")
+	write(w, "  decq %rcx", "Move back")
 	write(w, "")
 	write(w, "convert_loop:")
-	write(w, "  xorq %rdx, %rdx            # Clear RDX for division")
-	write(w, "  divq %rbx                  # RAX / 10, remainder in RDX")
-	write(w, "  addb $48, %dl              # Convert to ASCII")
-	write(w, "  movb %dl, (%rcx)           # Store character")
-	write(w, "  decq %rcx                  # Move back in buffer")
-	write(w, "  testq %rax, %rax           # Check if more digits")
-	write(w, "  jnz convert_loop           # Continue if not zero")
+	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
+	write(w, "  divq %rbx", "RAX / 10, remainder in RDX")
+	write(w, "  addb $48, %dl", "Convert to ASCII")
+	write(w, "  movb %dl, (%rcx)", "Store character")
+	write(w, "  decq %rcx", "Move back in buffer")
+	write(w, "  testq %rax, %rax", "Check if more digits")
+	write(w, "  jnz convert_loop", "Continue if not zero")
 	write(w, "")
-	write(w, "  incq %rcx                  # Move to first digit")
-	write(w, "  movq %rcx, %r12            # Save buffer start")
-	write(w, "  movq $-11, %rcx            # STD_OUTPUT_HANDLE")
-	write(w, "  call GetStdHandle          # Get stdout handle")
-	write(w, "  movq %rax, %rcx            # Handle in RCX")
-	write(w, "  movq %r12, %rdx            # Buffer address")
-	write(w, "  leaq buffer+32(%rip), %r8  # End of buffer")
-	write(w, "  subq %rdx, %r8             # Length")
-	write(w, "  leaq written(%rip), %r9    # Bytes written")
-	write(w, "  movq $0, 32(%rsp)          # lpOverlapped = NULL")
-	write(w, "  call WriteFile             # Write to stdout")
+	write(w, "  incq %rcx", "Move to first digit")
+	write(w, "  movq %rcx, %r12", "Save buffer start")
+	write(w, "  movq $-11, %rcx", "STD_OUTPUT_HANDLE")
+	write(w, "  call GetStdHandle", "Get stdout handle")
+	write(w, "  movq %rax, %rcx", "Handle in RCX")
+	write(w, "  movq %r12, %rdx", "Buffer address")
+	write(w, "  leaq buffer+32(%rip), %r8", "End of buffer")
+	write(w, "  subq %rdx, %r8", "Length")
+	write(w, "  leaq written(%rip), %r9", "Bytes written")
+	write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
+	write(w, "  call WriteFile", "Write to stdout")
 	write(w, "")
-	write(w, "  xorq %rcx, %rcx            # Exit code 0")
-	write(w, "  call ExitProcess           # Exit")
+	write(w, "  xorq %rcx, %rcx", "Exit code 0")
+	write(w, "  call ExitProcess", "Exit")
 	write(w, "")
 	c.emitAtoi(w)
 	write(w, ".bss")
 	write(w, "buffer:")
-	write(w, ".space 32                    # 32-byte buffer for number")
+	write(w, ".space 32", "32-byte buffer for number")
 	write(w, "written:")
-	write(w, ".space 8                     # Bytes written")
+	write(w, ".space 8", "Bytes written")
 	if c.usesArg {
 		write(w, "argv_ptr:")
-		write(w, ".space 8                     # LPWSTR* argv")
+		write(w, ".space 8", "LPWSTR* argv")
 		write(w, "argc_storage:")
-		write(w, ".space 8                     # int argc")
+		write(w, ".space 8", "int argc")
 	}
 	c.emitBssVars(w)
 	return nil
@@ -385,28 +407,55 @@ func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
 	if !c.usesArg {
 		return
 	}
-	write(w, "  call GetCommandLineW       # RAX = LPWSTR")
-	write(w, "  movq %rax, %rcx            # arg1: lpCmdLine")
-	write(w, "  leaq argc_storage(%rip), %rdx  # arg2: pNumArgs")
-	write(w, "  call CommandLineToArgvW    # RAX = LPWSTR*")
-	write(w, "  movq %rax, argv_ptr(%rip)  # Save argv pointer")
+	write(w, "  call GetCommandLineW", "RAX = LPWSTR")
+	write(w, "  movq %rax, %rcx", "arg1: lpCmdLine")
+	write(w, "  leaq argc_storage(%rip), %rdx", "arg2: pNumArgs")
+	write(w, "  call CommandLineToArgvW", "RAX = LPWSTR*")
+	write(w, "  movq %rax, argv_ptr(%rip)", "Save argv pointer")
 }
 
-func (c *Compiler) emitExpr(w io.Writer) {
-	c.emitTerm(w)
-	for c.peek().Type == TOK_PLUS || c.peek().Type == TOK_MINUS {
-		op := c.consume(c.peek().Type).Type
-		c.emitTerm(w)
-		write(w, "  popq %rax                  # Get second operand")
-		write(w, "  popq %rbx                  # Get first operand")
-		if op == TOK_PLUS {
-			write(w, "  addq %rbx, %rax            # Add them")
+func (c *Compiler) emitExpr(w io.Writer, e Expr) {
+	switch e := e.(type) {
+	case *NumLit:
+		write(w, fmt.Sprintf("  movq $%d, %%rax", e.Value), "Load number")
+		write(w, "  pushq %rax", "Push to stack")
+	case *ArgRef:
+		if runtime.GOOS == "windows" {
+			offset := 8 * e.Index
+			write(w, "  movq argv_ptr(%rip), %rax", "Load argv base")
+			write(w, fmt.Sprintf("  movq %d(%%rax), %%rdi", offset), fmt.Sprintf("Load argv[%d]", e.Index))
 		} else {
-			write(w, "  subq %rax, %rbx            # Subtract")
-			write(w, "  movq %rbx, %rax            # Result in RAX")
-
+			offset := 8 * (e.Index + 1)
+			write(w, fmt.Sprintf("  movq %d(%%rbp), %%rdi", offset), fmt.Sprintf("Load argv[%d]", e.Index))
 		}
-		write(w, "  pushq %rax                 # Save result")
+		write(w, "  call __atoi", "Parse as integer")
+		write(w, "  pushq %rax", "Push to stack")
+	case *VarRef:
+		c.vars[e.Name] = true
+		write(w, fmt.Sprintf("  movq var_%s(%%rip), %%rax", e.Name), "Load variable")
+		write(w, "  pushq %rax", "Push to stack")
+	case *BinOp:
+		c.emitExpr(w, e.L)
+		c.emitExpr(w, e.R)
+		write(w, "  popq %rax", "Get second operand")
+		write(w, "  popq %rbx", "Get first operand")
+		switch e.Op {
+		case TOK_PLUS:
+			write(w, "  addq %rbx, %rax", "Add them")
+		case TOK_MINUS:
+			write(w, "  subq %rax, %rbx", "Subtract")
+			write(w, "  movq %rbx, %rax", "Result in RAX")
+		case TOK_MUL:
+			write(w, "  imulq %rbx, %rax", "Multiply")
+		case TOK_DIV:
+			write(w, "  movq %rax, %rcx", "Save divisor")
+			write(w, "  movq %rbx, %rax", "Move dividend to RAX")
+			write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
+			write(w, "  idivq %rcx", "Divide RDX:RAX by divisor")
+		}
+		write(w, "  pushq %rax", "Save result")
+	default:
+		panic("unknown expr")
 	}
 }
 
@@ -426,113 +475,3 @@ func (c *Compiler) consume(typ TokenType) Token {
 	panic(fmt.Sprintf("expected token type %d", typ))
 }
 
-func (c *Compiler) emitFactor(w io.Writer) {
-	if c.peek().Type == TOK_NUM {
-		tok := c.consume(TOK_NUM)
-		s := fmt.Sprintf("  movq $%d, %%rax              # Load number\n", tok.Value)
-		write(w, s)
-		write(w, "  pushq %rax                 # Push to stack")
-		return
-	}
-	if c.peek().Type == TOK_ARG {
-		tok := c.consume(TOK_ARG)
-		c.usesArg = true
-		if runtime.GOOS == "windows" {
-			offset := 8 * tok.Value
-			write(w, "  movq argv_ptr(%rip), %rax  # Load argv base")
-			write(w, fmt.Sprintf("  movq %d(%%rax), %%rdi         # Load argv[%d]", offset, tok.Value))
-		} else {
-			offset := 8 * (tok.Value + 1)
-			write(w, fmt.Sprintf("  movq %d(%%rbp), %%rdi         # Load argv[%d]", offset, tok.Value))
-		}
-		write(w, "  call __atoi                # Parse as integer")
-		write(w, "  pushq %rax                 # Push to stack")
-		return
-	}
-	if c.peek().Type == TOK_IDENT {
-		tok := c.consume(TOK_IDENT)
-		c.vars[tok.Name] = true
-		write(w, fmt.Sprintf("  movq var_%s(%%rip), %%rax    # Load variable", tok.Name))
-		write(w, "  pushq %rax                 # Push to stack")
-		return
-	}
-	if c.peek().Type == TOK_LPAREN {
-		c.consume(TOK_LPAREN)
-		c.emitExpr(w)
-		c.consume(TOK_RPAREN)
-		return
-	}
-	panic("unexpected token")
-}
-
-func (c *Compiler) emitTerm(w io.Writer) {
-	c.emitFactor(w)
-	for c.peek().Type == TOK_MUL || c.peek().Type == TOK_DIV {
-		op := c.consume(c.peek().Type).Type
-		c.emitFactor(w)
-		write(w, "  popq %rax                  # Get second operand")
-		write(w, "  popq %rbx                  # Get first operand")
-		if op == TOK_MUL {
-			write(w, "  imulq %rbx, %rax           # Multiply")
-		} else {
-			write(w, "  movq %rax, %rcx            # Save divisor")
-			write(w, "  movq %rbx, %rax            # Move dividend to RAX")
-			write(w, "  xorq %rdx, %rdx      # Clear RDX for division")
-			write(w, "  idivq %rcx           # Divide RDX:RAX by divisor")
-		}
-		write(w, "  pushq %rax                 # Save result")
-	}
-}
-
-func (c *Compiler) evalExpr() int {
-	result := c.evalTerm()
-	for c.peek().Type == TOK_PLUS || c.peek().Type == TOK_MINUS {
-		op := c.consume(c.peek().Type).Type
-		right := c.evalTerm()
-		if op == TOK_PLUS {
-			result += right
-		} else {
-			result -= right
-		}
-	}
-	return result
-}
-
-func (c *Compiler) evalTerm() int {
-	result := c.evalFactor()
-	for c.peek().Type == TOK_MUL || c.peek().Type == TOK_DIV {
-		op := c.consume(c.peek().Type).Type
-		right := c.evalFactor()
-		if op == TOK_MUL {
-			result *= right
-		} else {
-			result /= right
-		}
-	}
-	return result
-}
-
-func (c *Compiler) evalFactor() int {
-	if c.peek().Type == TOK_NUM {
-		tok := c.consume(TOK_NUM)
-		return tok.Value
-	}
-	if c.peek().Type == TOK_ARG {
-		tok := c.consume(TOK_ARG)
-		if tok.Value < 1 || tok.Value > len(c.args) {
-			panic(fmt.Sprintf("arg $%d not provided", tok.Value))
-		}
-		return c.args[tok.Value-1]
-	}
-	if c.peek().Type == TOK_IDENT {
-		tok := c.consume(TOK_IDENT)
-		return c.varValues[tok.Name]
-	}
-	if c.peek().Type == TOK_LPAREN {
-		c.consume(TOK_LPAREN)
-		result := c.evalExpr()
-		c.consume(TOK_RPAREN)
-		return result
-	}
-	panic("unexpected token")
-}
