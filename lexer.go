@@ -18,6 +18,8 @@ const (
 	TOK_MOD
 	TOK_LPAREN
 	TOK_RPAREN
+	TOK_LBRACE
+	TOK_RBRACE
 	TOK_IDENT
 	TOK_ASSIGN
 	TOK_EQ
@@ -120,6 +122,16 @@ func (c *Compiler) Lex() {
 		}
 		if ch == ')' {
 			c.tokens = append(c.tokens, Token{Type: TOK_RPAREN})
+			c.pos++
+			continue
+		}
+		if ch == '{' {
+			c.tokens = append(c.tokens, Token{Type: TOK_LBRACE})
+			c.pos++
+			continue
+		}
+		if ch == '}' {
+			c.tokens = append(c.tokens, Token{Type: TOK_RBRACE})
 			c.pos++
 			continue
 		}

@@ -116,6 +116,11 @@ func TestEval(t *testing.T) {
 		{"15%3==0", nil, 1},
 		{"15%4==0", nil, 0},
 		{"1+2==3", nil, 1},
+		{"if 1 { 7 } else { 9 }", nil, 7},
+		{"if 0 { 7 } else { 9 }", nil, 9},
+		{"x=5; if x>3 { 100 } else { 0 }", nil, 100},
+		{"x=2; if x==1 { 1 } else if x==2 { 22 } else { 3 }", nil, 22},
+		{"if 1==1 { x=10; x*2 }", nil, 20},
 	}
 
 	for _, tt := range tests {
@@ -157,6 +162,10 @@ func TestCompile(t *testing.T) {
 		{"println(15%3==0)", nil, 1},
 		{"println(7<5)", nil, 0},
 		{"println(3>=3)", nil, 1},
+		{"if 1==1 { println(7) } else { println(9) }", nil, 7},
+		{"if 1==2 { println(7) } else { println(9) }", nil, 9},
+		{"x=2; if x==1 { println(11) } else if x==2 { println(22) } else { println(33) }", nil, 22},
+		{"i=15; if i%15==0 { println(15) } else if i%3==0 { println(3) } else { println(0) }", nil, 15},
 	}
 
 	tmpDir := t.TempDir()

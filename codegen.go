@@ -37,6 +37,34 @@ func (c *Compiler) emitStmt(w io.Writer, s Stmt) {
 	case *ExprStmt:
 		c.emitExpr(w, s.X)
 		write(w, "  popq %rax", "Discard stmt result")
+	case *IfStmt:
+		c.emitIf(w, s)
+	}
+}
+
+func (c *Compiler) emitIf(w io.Writer, s *IfStmt) {
+	id := c.labelCnt
+	c.labelCnt++
+	c.emitExpr(w, s.Cond)
+	write(w, "  popq %rax", "Pop condition")
+	write(w, "  testq %rax, %rax", "Test condition")
+	if len(s.Else) > 0 {
+		write(w, fmt.Sprintf("  jz .Lif_else_%d", id), "False -> else")
+		for _, t := range s.Then {
+			c.emitStmt(w, t)
+		}
+		write(w, fmt.Sprintf("  jmp .Lif_end_%d", id), "End of if")
+		write(w, fmt.Sprintf(".Lif_else_%d:", id))
+		for _, t := range s.Else {
+			c.emitStmt(w, t)
+		}
+		write(w, fmt.Sprintf(".Lif_end_%d:", id))
+	} else {
+		write(w, fmt.Sprintf("  jz .Lif_end_%d", id), "False -> skip then")
+		for _, t := range s.Then {
+			c.emitStmt(w, t)
+		}
+		write(w, fmt.Sprintf(".Lif_end_%d:", id))
 	}
 }
 

@@ -19,6 +19,7 @@ type Compiler struct {
 	usesPrint    bool
 	usesPrintStr bool
 	strLits      []string
+	labelCnt     int
 }
 
 func NewCompiler(input string) *Compiler {
@@ -49,6 +50,18 @@ func (c *Compiler) evalStmt(s Stmt) int {
 		return v
 	case *ExprStmt:
 		return c.evalExpr(s.X)
+	case *IfStmt:
+		var result int
+		var branch []Stmt
+		if c.evalExpr(s.Cond) != 0 {
+			branch = s.Then
+		} else {
+			branch = s.Else
+		}
+		for _, t := range branch {
+			result = c.evalStmt(t)
+		}
+		return result
 	}
 	panic("unknown stmt")
 }
@@ -147,6 +160,7 @@ func (c *Compiler) Compile(w io.Writer) error {
 	}
 	c.vars = map[string]bool{}
 	c.strLits = nil
+	c.labelCnt = 0
 
 	if runtime.GOOS == "windows" {
 		return c.compileWindows(w)

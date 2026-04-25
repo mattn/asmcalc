@@ -28,9 +28,15 @@ type AssignStmt struct {
 	Value Expr
 }
 type ExprStmt struct{ X Expr }
+type IfStmt struct {
+	Cond Expr
+	Then []Stmt
+	Else []Stmt
+}
 
 func (*AssignStmt) stmtNode() {}
 func (*ExprStmt) stmtNode()   {}
+func (*IfStmt) stmtNode()     {}
 
 type Program struct{ Stmts []Stmt }
 
@@ -54,12 +60,47 @@ func (c *Compiler) Parse() *Program {
 }
 
 func (c *Compiler) parseStmt() Stmt {
+	if c.peek().Type == TOK_IDENT && c.peek().Name == "if" {
+		return c.parseIf()
+	}
 	if c.peek().Type == TOK_IDENT && c.tokenPos+1 < len(c.tokens) && c.tokens[c.tokenPos+1].Type == TOK_ASSIGN {
 		name := c.consume(TOK_IDENT).Name
 		c.consume(TOK_ASSIGN)
 		return &AssignStmt{Name: name, Value: c.parseExpr()}
 	}
 	return &ExprStmt{X: c.parseExpr()}
+}
+
+func (c *Compiler) parseIf() *IfStmt {
+	c.consume(TOK_IDENT)
+	cond := c.parseExpr()
+	then := c.parseBlock()
+	var els []Stmt
+	if c.peek().Type == TOK_IDENT && c.peek().Name == "else" {
+		c.consume(TOK_IDENT)
+		if c.peek().Type == TOK_IDENT && c.peek().Name == "if" {
+			els = []Stmt{c.parseIf()}
+		} else {
+			els = c.parseBlock()
+		}
+	}
+	return &IfStmt{Cond: cond, Then: then, Else: els}
+}
+
+func (c *Compiler) parseBlock() []Stmt {
+	c.consume(TOK_LBRACE)
+	var stmts []Stmt
+	for {
+		for c.peek().Type == TOK_SEMI {
+			c.consume(TOK_SEMI)
+		}
+		if c.peek().Type == TOK_RBRACE {
+			break
+		}
+		stmts = append(stmts, c.parseStmt())
+	}
+	c.consume(TOK_RBRACE)
+	return stmts
 }
 
 func (c *Compiler) parseExpr() Expr {

@@ -16,23 +16,25 @@ func _() {
 	_ = x[TOK_MOD-5]
 	_ = x[TOK_LPAREN-6]
 	_ = x[TOK_RPAREN-7]
-	_ = x[TOK_IDENT-8]
-	_ = x[TOK_ASSIGN-9]
-	_ = x[TOK_EQ-10]
-	_ = x[TOK_NE-11]
-	_ = x[TOK_LT-12]
-	_ = x[TOK_LE-13]
-	_ = x[TOK_GT-14]
-	_ = x[TOK_GE-15]
-	_ = x[TOK_SEMI-16]
-	_ = x[TOK_ARG-17]
-	_ = x[TOK_STRING-18]
-	_ = x[TOK_EOF-19]
+	_ = x[TOK_LBRACE-8]
+	_ = x[TOK_RBRACE-9]
+	_ = x[TOK_IDENT-10]
+	_ = x[TOK_ASSIGN-11]
+	_ = x[TOK_EQ-12]
+	_ = x[TOK_NE-13]
+	_ = x[TOK_LT-14]
+	_ = x[TOK_LE-15]
+	_ = x[TOK_GT-16]
+	_ = x[TOK_GE-17]
+	_ = x[TOK_SEMI-18]
+	_ = x[TOK_ARG-19]
+	_ = x[TOK_STRING-20]
+	_ = x[TOK_EOF-21]
 }
 
-const _TokenType_name = "TOK_NUMTOK_PLUSTOK_MINUSTOK_MULTOK_DIVTOK_MODTOK_LPARENTOK_RPARENTOK_IDENTTOK_ASSIGNTOK_EQTOK_NETOK_LTTOK_LETOK_GTTOK_GETOK_SEMITOK_ARGTOK_STRINGTOK_EOF"
+const _TokenType_name = "TOK_NUMTOK_PLUSTOK_MINUSTOK_MULTOK_DIVTOK_MODTOK_LPARENTOK_RPARENTOK_LBRACETOK_RBRACETOK_IDENTTOK_ASSIGNTOK_EQTOK_NETOK_LTTOK_LETOK_GTTOK_GETOK_SEMITOK_ARGTOK_STRINGTOK_EOF"
 
-var _TokenType_index = [...]uint8{0, 7, 15, 24, 31, 38, 45, 55, 65, 74, 84, 90, 96, 102, 108, 114, 120, 128, 135, 145, 152}
+var _TokenType_index = [...]uint8{0, 7, 15, 24, 31, 38, 45, 55, 65, 75, 85, 94, 104, 110, 116, 122, 128, 134, 140, 148, 155, 165, 172}
 
 func (i TokenType) String() string {
 	idx := int(i) - 0
