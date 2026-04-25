@@ -1,93 +1,85 @@
 # mame
 
-A sample compiler that translates arithmetic expressions into GAS (GNU Assembler) format x86-64 assembly code.
+A tiny toy compiler that translates expressions into GAS (GNU Assembler) format x86-64 assembly code.
 
-Supports both Linux and Windows platforms.
+Supports both Linux and Windows.
 
 ## Features
 
-- Compiles arithmetic expressions (addition, subtraction, multiplication, division) to x86-64 assembly
-- Generates standalone executables that print the result
-- Supports operator precedence (multiplication/division before addition/subtraction)
-- Supports parentheses for grouping
+- Arithmetic: `+`, `-`, `*`, `/`, `%`, parentheses, operator precedence
+- Variables: `x = expr`
+- Multiple statements separated by `;` or newlines
+- Command-line arguments via `$1`, `$2`, ...
+- `println(expr)` builtin: prints the value with a newline and returns it
 
 ## Requirements
 
-- Go (for building the compiler)
+- Go (to build the compiler)
 - GNU `as` (assembler)
-- GNU `ld` (linker) on Linux, or `link.exe` on Windows
+- GNU `ld` (linker)
+  - On Windows, `-lkernel32 -lshell32` are linked
 
 ## Building
 
 ```sh
-cd cmd/mame
-go build
+go build ./cmd/mame
 ```
 
 ## Usage
 
-Basic usage:
-
-```sh
-./mame "3*4+5"
+```
+mame [-run] [-f file] expr [args...]
 ```
 
-This outputs GAS format assembly code to stdout.
+Without `-run`, prints generated assembly to stdout. With `-run`, assembles, links, and executes the program in one step.
 
-### Compile and run the expression
-
-To compile the expression to an executable and run it:
+### Quick start
 
 ```sh
-./mame "3*4+5" | as -64 - -o out.o
-ld out.o -o out
+./mame -run 'println(3*4+5)'
+# 17
+```
+
+### Pass arguments
+
+```sh
+./mame -run 'println($1 * $2)' 6 7
+# 42
+```
+
+### Read from file
+
+```sh
+echo 'x = 10
+y = 20
+println(x + y)' > prog.mame
+
+./mame -run -f prog.mame
+# 30
+```
+
+### Manual pipeline
+
+```sh
+./mame 'println((2+3)*4)' | as -64 - -o out.o
+ld out.o -o out                  # Linux
+# ld out.o -o out.exe -lkernel32 -lshell32   # Windows
 ./out
+# 20
 ```
-
-The output will be `17` (the result of 3*4+5).
-
-### Example with cleanup
-
-```sh
-trap 'rm -f out.o out' EXIT
-./mame "(2+3)*4" | as -64 - -o out.o
-ld out.o -o out
-./out
-```
-
-## Testing
-
-Run the test script:
-
-```sh
-cd cmd/mame
-./test.sh
-```
-
-The test script compiles the expression `1+2-3+4`, links it into an executable, runs it, and verifies the output is `4`.
 
 ## Examples
 
-More examples:
-
 ```sh
-# Operator precedence: multiplication before addition
-./mame "2+3*4" | as -64 - -o out.o && ld out.o -o out && ./out
-# Output: 14
-
-# Parentheses for grouping
-./mame "(2+3)*4" | as -64 - -o out.o && ld out.o -o out && ./out
-# Output: 20
-
-# Division
-./mame "20/4+2" | as -64 - -o out.o && ld out.o -o out && ./out
-# Output: 7
+./mame -run 'println(10 % 3)'           # 1
+./mame -run 'x = 5; println(x * x)'     # 25
+./mame -run 'println($1 + 1)' 41        # 42
 ```
 
 ## How it works
 
-1. The compiler lexes and parses arithmetic expressions
-2. Generates x86-64 assembly using a stack-based approach
-3. The generated assembly uses platform-specific syscalls (Linux) or Windows API calls to print the result and exit
-4. The assembly is piped to `as` (assembler) which creates an object file
-5. The object file is linked with `ld` (Linux) or `link.exe` (Windows) to create a standalone executable
+1. Lexes the input into tokens
+2. Parses tokens into an AST (`Program`, `Stmt`, `Expr`)
+3. Walks the AST to emit x86-64 assembly using a stack-based evaluation strategy
+4. Emits platform-specific runtime helpers (`__atoi` for `$N`, `__println_int` for `println`) as needed
+5. Pipes the assembly to `as` and links with `ld` to produce a standalone executable
