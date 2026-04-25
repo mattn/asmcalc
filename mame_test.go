@@ -11,6 +11,43 @@ import (
 	"testing"
 )
 
+func TestLex(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []TokenType
+	}{
+		{"==", []TokenType{TOK_EQ, TOK_EOF}},
+		{"!=", []TokenType{TOK_NE, TOK_EOF}},
+		{"<", []TokenType{TOK_LT, TOK_EOF}},
+		{"<=", []TokenType{TOK_LE, TOK_EOF}},
+		{">", []TokenType{TOK_GT, TOK_EOF}},
+		{">=", []TokenType{TOK_GE, TOK_EOF}},
+		{"=", []TokenType{TOK_ASSIGN, TOK_EOF}},
+		{"a==b", []TokenType{TOK_IDENT, TOK_EQ, TOK_IDENT, TOK_EOF}},
+		{"x=1", []TokenType{TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_EOF}},
+		{"1<=2", []TokenType{TOK_NUM, TOK_LE, TOK_NUM, TOK_EOF}},
+		{"a>=b", []TokenType{TOK_IDENT, TOK_GE, TOK_IDENT, TOK_EOF}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			c := NewCompiler(tt.input)
+			c.Lex()
+			got := make([]TokenType, len(c.tokens))
+			for i, tok := range c.tokens {
+				got[i] = tok.Type
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("Lex(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("Lex(%q)[%d] = %d, want %d", tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestEval(t *testing.T) {
 	tests := []struct {
 		expr string

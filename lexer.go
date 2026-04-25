@@ -19,6 +19,12 @@ const (
 	TOK_RPAREN
 	TOK_IDENT
 	TOK_ASSIGN
+	TOK_EQ
+	TOK_NE
+	TOK_LT
+	TOK_LE
+	TOK_GT
+	TOK_GE
 	TOK_SEMI
 	TOK_ARG
 	TOK_EOF
@@ -99,7 +105,37 @@ func (c *Compiler) Lex() {
 			continue
 		}
 		if ch == '=' {
+			if c.pos+1 < len(c.input) && c.input[c.pos+1] == '=' {
+				c.tokens = append(c.tokens, Token{Type: TOK_EQ})
+				c.pos += 2
+				continue
+			}
 			c.tokens = append(c.tokens, Token{Type: TOK_ASSIGN})
+			c.pos++
+			continue
+		}
+		if ch == '!' && c.pos+1 < len(c.input) && c.input[c.pos+1] == '=' {
+			c.tokens = append(c.tokens, Token{Type: TOK_NE})
+			c.pos += 2
+			continue
+		}
+		if ch == '<' {
+			if c.pos+1 < len(c.input) && c.input[c.pos+1] == '=' {
+				c.tokens = append(c.tokens, Token{Type: TOK_LE})
+				c.pos += 2
+				continue
+			}
+			c.tokens = append(c.tokens, Token{Type: TOK_LT})
+			c.pos++
+			continue
+		}
+		if ch == '>' {
+			if c.pos+1 < len(c.input) && c.input[c.pos+1] == '=' {
+				c.tokens = append(c.tokens, Token{Type: TOK_GE})
+				c.pos += 2
+				continue
+			}
+			c.tokens = append(c.tokens, Token{Type: TOK_GT})
 			c.pos++
 			continue
 		}
