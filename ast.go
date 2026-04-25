@@ -70,7 +70,7 @@ func (c *Compiler) parseExpr() Expr {
 
 func (c *Compiler) parseTerm() Expr {
 	left := c.parseFactor()
-	for c.peek().Type == TOK_MUL || c.peek().Type == TOK_DIV {
+	for c.peek().Type == TOK_MUL || c.peek().Type == TOK_DIV || c.peek().Type == TOK_MOD {
 		op := c.consume(c.peek().Type).Type
 		right := c.parseFactor()
 		left = &BinOp{Op: op, L: left, R: right}

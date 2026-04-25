@@ -16,6 +16,7 @@ const (
 	TOK_MINUS
 	TOK_MUL
 	TOK_DIV
+	TOK_MOD
 	TOK_LPAREN
 	TOK_RPAREN
 	TOK_IDENT
@@ -118,6 +119,11 @@ func (c *Compiler) Lex() {
 			c.pos++
 			continue
 		}
+		if ch == '%' {
+			c.tokens = append(c.tokens, Token{Type: TOK_MOD})
+			c.pos++
+			continue
+		}
 		if ch == '(' {
 			c.tokens = append(c.tokens, Token{Type: TOK_LPAREN})
 			c.pos++
@@ -212,6 +218,8 @@ func (c *Compiler) evalExpr(e Expr) int {
 			return l * r
 		case TOK_DIV:
 			return l / r
+		case TOK_MOD:
+			return l % r
 		}
 	}
 	panic("unknown expr")
@@ -507,6 +515,12 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 			write(w, "  movq %rbx, %rax", "Move dividend to RAX")
 			write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
 			write(w, "  idivq %rcx", "Divide RDX:RAX by divisor")
+		case TOK_MOD:
+			write(w, "  movq %rax, %rcx", "Save divisor")
+			write(w, "  movq %rbx, %rax", "Move dividend to RAX")
+			write(w, "  cqto", "Sign-extend RAX into RDX")
+			write(w, "  idivq %rcx", "RDX = remainder")
+			write(w, "  movq %rdx, %rax", "Result = remainder")
 		}
 		write(w, "  pushq %rax", "Save result")
 	default:
