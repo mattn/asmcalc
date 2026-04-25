@@ -28,12 +28,13 @@ go build ./cmd/mame
 ## Usage
 
 ```
-mame asm     [-f file] expr
-mame compile [-o out] [-f file] expr
-mame run     [-f file] expr [args...]
-mame eval    [-f file] expr [args...]
+mame asm     [-e expr] [file]
+mame compile [-o out] [-e expr] [file]
+mame run     [-e expr] [file] [args...]
+mame eval    [-e expr] [file] [args...]
 ```
 
+- A `file` argument is the default source. Use `-e expr` to pass source inline instead.
 - `asm`: prints generated assembly to stdout
 - `compile`: assembles (`as`) and links (`ld`) into a standalone executable (default output: `a.out` / `a.exe`)
 - `run`: compiles to a temp executable and runs it immediately
@@ -42,14 +43,14 @@ mame eval    [-f file] expr [args...]
 ### Quick start
 
 ```sh
-./mame run 'println(3*4+5)'
+./mame run -e 'println(3*4+5)'
 # 17
 ```
 
 ### Pass arguments
 
 ```sh
-./mame run 'println($1 * $2)' 6 7
+./mame run -e 'println($1 * $2)' 6 7
 # 42
 ```
 
@@ -60,14 +61,14 @@ echo 'x = 10
 y = 20
 println(x + y)' > prog.mame
 
-./mame run -f prog.mame
+./mame run prog.mame
 # 30
 ```
 
 ### Compile to a file
 
 ```sh
-./mame compile -o hello 'println("Hello")'
+./mame compile -o hello -e 'println("Hello")'
 ./hello
 # Hello
 ```
@@ -75,7 +76,7 @@ println(x + y)' > prog.mame
 ### Manual pipeline
 
 ```sh
-./mame asm 'println((2+3)*4)' | as -64 - -o out.o
+./mame asm -e 'println((2+3)*4)' | as -64 - -o out.o
 ld out.o -o out                  # Linux
 # ld out.o -o out.exe -lkernel32 -lshell32   # Windows
 ./out
@@ -85,10 +86,10 @@ ld out.o -o out                  # Linux
 ## Examples
 
 ```sh
-./mame run 'println(10 % 3)'           # 1
-./mame run 'x = 5; println(x * x)'     # 25
-./mame run 'println($1 + 1)' 41        # 42
-./mame run 'print("Fizz");println("Buzz")'   # FizzBuzz
+./mame run -e 'println(10 % 3)'           # 1
+./mame run -e 'x = 5; println(x * x)'     # 25
+./mame run -e 'println($1 + 1)' 41        # 42
+./mame run -e 'print("Fizz");println("Buzz")'   # FizzBuzz
 ```
 
 ## How it works

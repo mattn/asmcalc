@@ -37,36 +37,36 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
-	fmt.Fprintln(os.Stderr, "  mame asm     [-f file] expr")
-	fmt.Fprintln(os.Stderr, "  mame compile [-o out] [-f file] expr")
-	fmt.Fprintln(os.Stderr, "  mame run     [-f file] expr [args...]")
-	fmt.Fprintln(os.Stderr, "  mame eval    [-f file] expr [args...]")
+	fmt.Fprintln(os.Stderr, "  mame asm     [-e expr] [file]")
+	fmt.Fprintln(os.Stderr, "  mame compile [-o out] [-e expr] [file]")
+	fmt.Fprintln(os.Stderr, "  mame run     [-e expr] [file] [args...]")
+	fmt.Fprintln(os.Stderr, "  mame eval    [-e expr] [file] [args...]")
 }
 
 func loadCompiler(fs *flag.FlagSet, args []string) (*mame.Compiler, []string) {
-	filename := fs.String("f", "", "read expression from file")
+	expr := fs.String("e", "", "evaluate expression instead of reading a file")
 	fs.Parse(args)
 
-	var expr string
+	var src string
 	var runtimeArgs []string
-	if *filename != "" {
-		b, err := os.ReadFile(*filename)
+	if *expr != "" {
+		src = *expr
+		runtimeArgs = fs.Args()
+	} else {
+		if fs.NArg() < 1 {
+			fmt.Fprintf(os.Stderr, "mame %s: file or -e required\n", fs.Name())
+			os.Exit(1)
+		}
+		b, err := os.ReadFile(fs.Arg(0))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		expr = string(b)
-		runtimeArgs = fs.Args()
-	} else {
-		if fs.NArg() < 1 {
-			fmt.Fprintf(os.Stderr, "mame %s: expression required\n", fs.Name())
-			os.Exit(1)
-		}
-		expr = fs.Arg(0)
+		src = string(b)
 		runtimeArgs = fs.Args()[1:]
 	}
 
-	compiler := mame.NewCompiler(expr)
+	compiler := mame.NewCompiler(src)
 	compiler.Lex()
 	return compiler, runtimeArgs
 }
