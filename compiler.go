@@ -66,6 +66,17 @@ func (c *Compiler) evalExpr(e Expr) int {
 		return c.varValues[e.Name]
 	case *CallExpr:
 		switch e.Name {
+		case "print":
+			if len(e.Args) != 1 {
+				panic(fmt.Sprintf("print takes 1 arg, got %d", len(e.Args)))
+			}
+			if str, ok := e.Args[0].(*StrLit); ok {
+				fmt.Print(str.Value)
+				return 0
+			}
+			v := c.evalExpr(e.Args[0])
+			fmt.Print(v)
+			return v
 		case "println":
 			if len(e.Args) != 1 {
 				panic(fmt.Sprintf("println takes 1 arg, got %d", len(e.Args)))

@@ -117,11 +117,16 @@ func (c *Compiler) parseFactor() Expr {
 				args = append(args, c.parseExpr())
 			}
 			c.consume(TOK_RPAREN)
-			if name == "println" && len(args) == 1 {
-				if _, ok := args[0].(*StrLit); ok {
+			if name == "print" || name == "println" {
+				if len(args) == 1 {
+					if _, ok := args[0].(*StrLit); ok {
+						c.usesPrintStr = true
+					} else {
+						c.usesPrint = true
+					}
+				}
+				if name == "println" {
 					c.usesPrintStr = true
-				} else {
-					c.usesPrint = true
 				}
 			}
 			return &CallExpr{Name: name, Args: args}

@@ -115,38 +115,69 @@ func (c *Compiler) emitCmpSet(w io.Writer, setcc, comment string) {
 
 func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 	switch e.Name {
-	case "println":
+	case "print", "println":
 		if len(e.Args) != 1 {
-			panic(fmt.Sprintf("println takes 1 arg, got %d", len(e.Args)))
+			panic(fmt.Sprintf("%s takes 1 arg, got %d", e.Name, len(e.Args)))
 		}
-		if str, ok := e.Args[0].(*StrLit); ok {
+		_, isStr := e.Args[0].(*StrLit)
+		if isStr {
+			str := e.Args[0].(*StrLit)
 			idx := len(c.strLits)
 			c.strLits = append(c.strLits, str.Value)
 			c.usesPrintStr = true
 			label := fmt.Sprintf(".Lstr_%d", idx)
-			length := len(str.Value) + 1
-			if runtime.GOOS == "windows" {
-				write(w, fmt.Sprintf("  leaq %s(%%rip), %%rcx", label), "Arg: string ptr")
-				write(w, fmt.Sprintf("  movq $%d, %%rdx", length), "Arg: length")
-			} else {
-				write(w, fmt.Sprintf("  leaq %s(%%rip), %%rdi", label), "Arg: string ptr")
-				write(w, fmt.Sprintf("  movq $%d, %%rsi", length), "Arg: length")
-			}
-			write(w, "  call __println_str", "Print string")
-			write(w, "  pushq $0", "Push dummy expr result")
-			return
-		}
-		c.emitExpr(w, e.Args[0])
-		if runtime.GOOS == "windows" {
-			write(w, "  popq %rcx", "Arg into RCX (aligns RSP)")
+			c.emitPrintStrCall(w, label, len(str.Value))
 		} else {
-			write(w, "  popq %rdi", "Arg into RDI (aligns RSP)")
+			c.emitExpr(w, e.Args[0])
+			if runtime.GOOS == "windows" {
+				write(w, "  popq %rcx", "Arg into RCX (aligns RSP)")
+			} else {
+				write(w, "  popq %rdi", "Arg into RDI (aligns RSP)")
+			}
+			write(w, "  call __print_int", "Print int, returns value in RAX")
 		}
-		write(w, "  call __println_int", "Print value, returns it in RAX")
-		write(w, "  pushq %rax", "Push return value as expr result")
+		if e.Name == "println" {
+			if isStr {
+				c.emitPrintNl(w)
+				write(w, "  pushq $0", "Push dummy expr result")
+			} else {
+				write(w, "  pushq %rax", "Save value across newline call")
+				write(w, "  subq $8, %rsp", "Align RSP for call")
+				c.emitPrintNl(w)
+				write(w, "  addq $8, %rsp", "Restore align")
+			}
+		} else {
+			if isStr {
+				write(w, "  pushq $0", "Push dummy expr result")
+			} else {
+				write(w, "  pushq %rax", "Push int value as expr result")
+			}
+		}
 	default:
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	}
+}
+
+func (c *Compiler) emitPrintStrCall(w io.Writer, label string, length int) {
+	if runtime.GOOS == "windows" {
+		write(w, fmt.Sprintf("  leaq %s(%%rip), %%rcx", label), "String ptr")
+		write(w, fmt.Sprintf("  movq $%d, %%rdx", length), "Length")
+	} else {
+		write(w, fmt.Sprintf("  leaq %s(%%rip), %%rdi", label), "String ptr")
+		write(w, fmt.Sprintf("  movq $%d, %%rsi", length), "Length")
+	}
+	write(w, "  call __print_str", "Print string")
+}
+
+func (c *Compiler) emitPrintNl(w io.Writer) {
+	if runtime.GOOS == "windows" {
+		write(w, "  leaq .Lnl(%rip), %rcx", "Newline ptr")
+		write(w, "  movq $1, %rdx", "Length 1")
+	} else {
+		write(w, "  leaq .Lnl(%rip), %rdi", "Newline ptr")
+		write(w, "  movq $1, %rsi", "Length 1")
+	}
+	write(w, "  call __print_str", "Print newline")
 }
 
 func (c *Compiler) emitBssVars(w io.Writer) {
@@ -298,30 +329,28 @@ func (c *Compiler) emitPrintln(w io.Writer) {
 		c.emitPrintlnWindows(w)
 		return
 	}
-	write(w, "__println_int:")
+	write(w, "__print_int:")
 	write(w, "  movq %rdi, %r10", "Save input value (preserved across syscall)")
 	write(w, "  movq %rdi, %rax", "Value for division")
 	write(w, "  testq %rax, %rax", "Check sign")
-	write(w, "  jns .Lpli_abs", "Non-negative: skip negation")
+	write(w, "  jns .Lpi_abs", "Non-negative: skip negation")
 	write(w, "  negq %rax", "Absolute value for unsigned div")
-	write(w, ".Lpli_abs:")
+	write(w, ".Lpi_abs:")
 	write(w, "  movq $10, %r8", "Base 10")
-	write(w, "  leaq buffer+31(%rip), %r9", "End of buffer")
-	write(w, "  movb $10, (%r9)", "Newline")
-	write(w, "  decq %r9", "Move back")
-	write(w, ".Lpli_conv:")
+	write(w, "  leaq buffer+31(%rip), %r9", "Last byte of buffer")
+	write(w, ".Lpi_conv:")
 	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
 	write(w, "  divq %r8", "RAX / 10")
 	write(w, "  addb $48, %dl", "Digit to ASCII")
 	write(w, "  movb %dl, (%r9)", "Store digit")
 	write(w, "  decq %r9", "Move back")
 	write(w, "  testq %rax, %rax", "More digits?")
-	write(w, "  jnz .Lpli_conv", "Continue")
+	write(w, "  jnz .Lpi_conv", "Continue")
 	write(w, "  testq %r10, %r10", "Original negative?")
-	write(w, "  jns .Lpli_pos", "Non-negative: skip sign")
+	write(w, "  jns .Lpi_pos", "Non-negative: skip sign")
 	write(w, "  movb $45, (%r9)", "'-' sign")
 	write(w, "  decq %r9", "Move back")
-	write(w, ".Lpli_pos:")
+	write(w, ".Lpi_pos:")
 	write(w, "  incq %r9", "First char")
 	write(w, "  movq $1, %rax", "Syscall: write")
 	write(w, "  movq $1, %rdi", "Stdout")
@@ -335,32 +364,30 @@ func (c *Compiler) emitPrintln(w io.Writer) {
 }
 
 func (c *Compiler) emitPrintlnWindows(w io.Writer) {
-	write(w, "__println_int:")
+	write(w, "__print_int:")
 	write(w, "  subq $56, %rsp", "Shadow + 5th arg + spill, keep RSP aligned")
 	write(w, "  movq %rcx, 40(%rsp)", "Spill input value")
 	write(w, "  movq %rcx, %rax", "Value for division")
 	write(w, "  testq %rax, %rax", "Check sign")
-	write(w, "  jns .Lpli_abs", "Non-negative: skip negation")
+	write(w, "  jns .Lpi_abs", "Non-negative: skip negation")
 	write(w, "  negq %rax", "Absolute value for unsigned div")
-	write(w, ".Lpli_abs:")
+	write(w, ".Lpi_abs:")
 	write(w, "  movq $10, %r8", "Base 10")
-	write(w, "  leaq buffer+31(%rip), %r9", "End of buffer")
-	write(w, "  movb $10, (%r9)", "Newline")
-	write(w, "  decq %r9", "Move back")
-	write(w, ".Lpli_conv:")
+	write(w, "  leaq buffer+31(%rip), %r9", "Last byte of buffer")
+	write(w, ".Lpi_conv:")
 	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
 	write(w, "  divq %r8", "RAX / 10")
 	write(w, "  addb $48, %dl", "Digit to ASCII")
 	write(w, "  movb %dl, (%r9)", "Store digit")
 	write(w, "  decq %r9", "Move back")
 	write(w, "  testq %rax, %rax", "More digits?")
-	write(w, "  jnz .Lpli_conv", "Continue")
+	write(w, "  jnz .Lpi_conv", "Continue")
 	write(w, "  movq 40(%rsp), %rax", "Reload original")
 	write(w, "  testq %rax, %rax", "Original negative?")
-	write(w, "  jns .Lpli_pos", "Non-negative: skip sign")
+	write(w, "  jns .Lpi_pos", "Non-negative: skip sign")
 	write(w, "  movb $45, (%r9)", "'-' sign")
 	write(w, "  decq %r9", "Move back")
-	write(w, ".Lpli_pos:")
+	write(w, ".Lpi_pos:")
 	write(w, "  incq %r9", "First char")
 	write(w, "  movq %r9, 48(%rsp)", "Spill buffer ptr across GetStdHandle")
 	write(w, "  movq $-11, %rcx", "STD_OUTPUT_HANDLE")
@@ -386,7 +413,7 @@ func (c *Compiler) emitPrintlnStr(w io.Writer) {
 		c.emitPrintlnStrWindows(w)
 		return
 	}
-	write(w, "__println_str:")
+	write(w, "__print_str:")
 	write(w, "  movq %rsi, %rdx", "Length to RDX (syscall arg 3)")
 	write(w, "  movq %rdi, %rsi", "Buffer to RSI (syscall arg 2)")
 	write(w, "  movq $1, %rdi", "Stdout")
@@ -397,7 +424,7 @@ func (c *Compiler) emitPrintlnStr(w io.Writer) {
 }
 
 func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
-	write(w, "__println_str:")
+	write(w, "__print_str:")
 	write(w, "  subq $56, %rsp", "Shadow + 5th arg + spill")
 	write(w, "  movq %rcx, 40(%rsp)", "Spill string ptr")
 	write(w, "  movq %rdx, 48(%rsp)", "Spill length")
@@ -415,12 +442,14 @@ func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
 }
 
 func (c *Compiler) emitData(w io.Writer) {
-	if len(c.strLits) == 0 {
+	if !c.usesPrintStr {
 		return
 	}
 	write(w, ".data")
 	for i, s := range c.strLits {
 		write(w, fmt.Sprintf(".Lstr_%d:", i))
-		write(w, fmt.Sprintf(".ascii %q", s+"\n"))
+		write(w, fmt.Sprintf(".ascii %q", s))
 	}
+	write(w, ".Lnl:")
+	write(w, `.ascii "\n"`)
 }
