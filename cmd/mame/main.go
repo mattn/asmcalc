@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/mattn/mame"
 )
@@ -14,7 +15,13 @@ import (
 func main() {
 	filename := flag.String("f", "", "read expression from file")
 	run := flag.Bool("run", false, "compile and run the expression")
+	eval := flag.Bool("eval", false, "evaluate the expression in-process (no asm pipeline)")
 	flag.Parse()
+
+	if *run && *eval {
+		fmt.Fprintln(os.Stderr, "-run and -eval are mutually exclusive")
+		os.Exit(1)
+	}
 
 	var expr string
 	var runtimeArgs []string
@@ -28,7 +35,7 @@ func main() {
 		runtimeArgs = flag.Args()
 	} else {
 		if flag.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: mame [-run] [-f file] expr [args...]")
+			fmt.Fprintln(os.Stderr, "usage: mame [-run|-eval] [-f file] expr [args...]")
 			os.Exit(1)
 		}
 		expr = flag.Arg(0)
@@ -37,6 +44,20 @@ func main() {
 
 	compiler := mame.NewCompiler(expr)
 	compiler.Lex()
+
+	if *eval {
+		intArgs := make([]int, len(runtimeArgs))
+		for i, a := range runtimeArgs {
+			n, err := strconv.Atoi(a)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "arg $%d: %v\n", i+1, err)
+				os.Exit(1)
+			}
+			intArgs[i] = n
+		}
+		compiler.Eval(intArgs...)
+		return
+	}
 
 	if !*run {
 		compiler.Compile(os.Stdout)

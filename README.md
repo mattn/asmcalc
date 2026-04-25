@@ -28,10 +28,12 @@ go build ./cmd/mame
 ## Usage
 
 ```
-mame [-run] [-f file] expr [args...]
+mame [-run|-eval] [-f file] expr [args...]
 ```
 
-Without `-run`, prints generated assembly to stdout. With `-run`, assembles, links, and executes the program in one step.
+- default: prints generated assembly to stdout
+- `-run`: compiles, assembles (`as`), links (`ld`), and executes
+- `-eval`: evaluates in-process via the built-in interpreter (no asm pipeline; useful for quick checks)
 
 ### Quick start
 
