@@ -85,3 +85,27 @@ ld out.o -o out                  # Linux
 3. Walks the AST to emit x86-64 assembly using a stack-based evaluation strategy
 4. Emits platform-specific runtime helpers (`__atoi` for `$N`, `__println_int` for `println`) as needed
 5. Pipes the assembly to `as` and links with `ld` to produce a standalone executable
+
+## TODO: how should strings be supported?
+
+Adding string values introduces a design choice that significantly changes the
+language's character. Roughly, the options are:
+
+- **Level 1 — string literals only as `println` arguments.** Strings cannot be
+  assigned to variables or appear in expressions; `println("Fizz")` is a
+  syntactic form. Values stay 8 bytes, no type system needed. Sufficient for
+  FizzBuzz.
+- **Level 2 — statically typed strings.** Variables can hold a string, but the
+  type is fixed at first assignment. Mixing types (`x = "a"; if x < 5`) is a
+  compile-time error. Requires a type-inference pass.
+- **Level 3 — dynamic typing, runtime errors on mismatch.** Each value carries
+  a runtime type tag (16 B per slot). Operators check the tag at runtime; type
+  mismatches raise an error mid-execution. Lua-like.
+- **Level 4 — dynamic typing with implicit coercion.** Like Level 3 but
+  comparisons across types silently coerce. JavaScript-like; semantics get
+  hairy fast.
+
+Level 1 is the most natural fit for the current style of the project. Levels 2+
+shift mame from "tiny calculator that emits asm" to "a real language with a
+type system", which is a deliberate design jump worth discussing before
+committing to.
