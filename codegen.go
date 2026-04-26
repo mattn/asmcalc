@@ -39,7 +39,24 @@ func (c *Compiler) emitStmt(w io.Writer, s Stmt) {
 		write(w, "  popq %rax", "Discard stmt result")
 	case *IfStmt:
 		c.emitIf(w, s)
+	case *WhileStmt:
+		c.emitWhile(w, s)
 	}
+}
+
+func (c *Compiler) emitWhile(w io.Writer, s *WhileStmt) {
+	id := c.labelCnt
+	c.labelCnt++
+	write(w, fmt.Sprintf(".Lwhile_top_%d:", id))
+	c.emitExpr(w, s.Cond)
+	write(w, "  popq %rax", "Pop condition")
+	write(w, "  testq %rax, %rax", "Test condition")
+	write(w, fmt.Sprintf("  jz .Lwhile_end_%d", id), "False -> exit loop")
+	for _, t := range s.Body {
+		c.emitStmt(w, t)
+	}
+	write(w, fmt.Sprintf("  jmp .Lwhile_top_%d", id), "Loop back")
+	write(w, fmt.Sprintf(".Lwhile_end_%d:", id))
 }
 
 func (c *Compiler) emitIf(w io.Writer, s *IfStmt) {
@@ -74,16 +91,25 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		write(w, fmt.Sprintf("  movq $%d, %%rax", e.Value), "Load number")
 		write(w, "  pushq %rax", "Push to stack")
 	case *ArgRef:
+		c.emitExpr(w, e.Index)
+		write(w, "  popq %rax", "Pop arg index")
 		if runtime.GOOS == "windows" {
-			offset := 8 * e.Index
-			write(w, "  movq argv_ptr(%rip), %rax", "Load argv base")
-			write(w, fmt.Sprintf("  movq %d(%%rax), %%rdi", offset), fmt.Sprintf("Load argv[%d]", e.Index))
+			write(w, "  movq argv_ptr(%rip), %rcx", "argv base")
+			write(w, "  movq (%rcx,%rax,8), %rdi", "argv[N]")
 		} else {
-			offset := 8 * (e.Index + 1)
-			write(w, fmt.Sprintf("  movq %d(%%rbp), %%rdi", offset), fmt.Sprintf("Load argv[%d]", e.Index))
+			write(w, "  incq %rax", "N+1 (skip argc slot)")
+			write(w, "  movq (%rbp,%rax,8), %rdi", "argv[N]")
 		}
 		write(w, "  call __atoi", "Parse as integer")
 		write(w, "  pushq %rax", "Push to stack")
+	case *NargExpr:
+		if runtime.GOOS == "windows" {
+			write(w, "  movq argc_storage(%rip), %rax", "argc")
+		} else {
+			write(w, "  movq (%rbp), %rax", "argc")
+		}
+		write(w, "  decq %rax", "Exclude program name")
+		write(w, "  pushq %rax", "Push narg")
 	case *VarRef:
 		c.vars[e.Name] = true
 		write(w, fmt.Sprintf("  movq var_%s(%%rip), %%rax", e.Name), "Load variable")
@@ -289,7 +315,7 @@ func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
 }
 
 func (c *Compiler) emitAtoi(w io.Writer) {
-	if !c.usesArg {
+	if !c.usesAtoi {
 		return
 	}
 	if runtime.GOOS == "windows" {

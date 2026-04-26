@@ -9,7 +9,7 @@ Supports both Linux and Windows.
 - Arithmetic: `+`, `-`, `*`, `/`, `%`, parentheses, operator precedence
 - Variables: `x = expr`
 - Multiple statements separated by `;` or newlines
-- Command-line arguments via `$1`, `$2`, ...
+- Command-line arguments via `arg(N)` (1-indexed) and `narg()` for the count
 - `println(expr)` builtin: prints the value with a newline and returns it
 
 ## Requirements
@@ -50,7 +50,7 @@ mame eval    [-e expr] [file] [args...]
 ### Pass arguments
 
 ```sh
-./mame run -e 'println($1 * $2)' 6 7
+./mame run -e 'println(arg(1) * arg(2))' 6 7
 # 42
 ```
 
@@ -88,7 +88,8 @@ ld out.o -o out                  # Linux
 ```sh
 ./mame run -e 'println(10 % 3)'           # 1
 ./mame run -e 'x = 5; println(x * x)'     # 25
-./mame run -e 'println($1 + 1)' 41        # 42
+./mame run -e 'println(arg(1) + 1)' 41        # 42
+./mame run -e 'i=1;while i<=narg() {println(arg(i));i=i+1}' 5 10 15
 ./mame run -e 'print("Fizz");println("Buzz")'   # FizzBuzz
 ```
 

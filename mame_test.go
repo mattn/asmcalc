@@ -101,10 +101,13 @@ func TestEval(t *testing.T) {
 		{"x=10;x+5", nil, 15},
 		{"x=2;y=3;x*y+1", nil, 7},
 		{"x=5;x=x+1;x*2", nil, 12},
-		{"$1+5", []int{10}, 15},
-		{"$1*$2", []int{3, 4}, 12},
-		{"x=$1;x*2+1", []int{7}, 15},
-		{"x=$1\ny=$2\nx*y+1\n", []int{6, 7}, 43},
+		{"arg(1)+5", []int{10}, 15},
+		{"arg(1)*arg(2)", []int{3, 4}, 12},
+		{"x=arg(1);x*2+1", []int{7}, 15},
+		{"x=arg(1)\ny=arg(2)\nx*y+1\n", []int{6, 7}, 43},
+		{"narg()", []int{}, 0},
+		{"narg()", []int{1, 2, 3}, 3},
+		{"i=1;s=0;while i<=narg() {s=s+arg(i);i=i+1};s", []int{10, 20, 30}, 60},
 		{`println("Fizz")`, nil, 0},
 		{"1==1", nil, 1},
 		{"1==2", nil, 0},
@@ -121,6 +124,8 @@ func TestEval(t *testing.T) {
 		{"x=5; if x>3 { 100 } else { 0 }", nil, 100},
 		{"x=2; if x==1 { 1 } else if x==2 { 22 } else { 3 }", nil, 22},
 		{"if 1==1 { x=10; x*2 }", nil, 20},
+		{"i=0; s=0; while i<5 { i=i+1; s=s+i }; s", nil, 15},
+		{"i=0; while i<3 { i=i+1 }; i", nil, 3},
 	}
 
 	for _, tt := range tests {
@@ -153,10 +158,13 @@ func TestCompile(t *testing.T) {
 		{"x=10;println(x+5)", nil, 15},
 		{"x=2;y=3;println(x*y+1)", nil, 7},
 		{"x=5;x=x+1;println(x*2)", nil, 12},
-		{"println($1+5)", []string{"10"}, 15},
-		{"println($1*$2)", []string{"3", "4"}, 12},
-		{"x=$1;println(x*2+1)", []string{"7"}, 15},
-		{"x=$1\ny=$2\nprintln(x*y+1)\n", []string{"6", "7"}, 43},
+		{"println(arg(1)+5)", []string{"10"}, 15},
+		{"println(arg(1)*arg(2))", []string{"3", "4"}, 12},
+		{"x=arg(1);println(x*2+1)", []string{"7"}, 15},
+		{"x=arg(1)\ny=arg(2)\nprintln(x*y+1)\n", []string{"6", "7"}, 43},
+		{"println(narg())", []string{}, 0},
+		{"println(narg())", []string{"a", "b", "c"}, 3},
+		{"i=1;s=0;while i<=narg() {s=s+arg(i);i=i+1};println(s)", []string{"10", "20", "30"}, 60},
 		{"println(1==1)", nil, 1},
 		{"println(1==2)", nil, 0},
 		{"println(15%3==0)", nil, 1},
@@ -166,6 +174,8 @@ func TestCompile(t *testing.T) {
 		{"if 1==2 { println(7) } else { println(9) }", nil, 9},
 		{"x=2; if x==1 { println(11) } else if x==2 { println(22) } else { println(33) }", nil, 22},
 		{"i=15; if i%15==0 { println(15) } else if i%3==0 { println(3) } else { println(0) }", nil, 15},
+		{"i=0; s=0; while i<5 { i=i+1; s=s+i }; println(s)", nil, 15},
+		{"i=0; while i<3 { i=i+1 }; println(i)", nil, 3},
 	}
 
 	tmpDir := t.TempDir()

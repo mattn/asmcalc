@@ -5,7 +5,8 @@ type Stmt interface{ stmtNode() }
 
 type NumLit struct{ Value int }
 type StrLit struct{ Value string }
-type ArgRef struct{ Index int }
+type ArgRef struct{ Index Expr }
+type NargExpr struct{}
 type VarRef struct{ Name string }
 type BinOp struct {
 	Op   TokenType
@@ -16,12 +17,13 @@ type CallExpr struct {
 	Args []Expr
 }
 
-func (*NumLit) exprNode()   {}
-func (*StrLit) exprNode()   {}
-func (*ArgRef) exprNode()   {}
-func (*VarRef) exprNode()   {}
-func (*BinOp) exprNode()    {}
-func (*CallExpr) exprNode() {}
+func (*NumLit) exprNode()    {}
+func (*StrLit) exprNode()    {}
+func (*ArgRef) exprNode()    {}
+func (*NargExpr) exprNode()  {}
+func (*VarRef) exprNode()    {}
+func (*BinOp) exprNode()     {}
+func (*CallExpr) exprNode()  {}
 
 type AssignStmt struct {
 	Name  string
@@ -33,16 +35,22 @@ type IfStmt struct {
 	Then []Stmt
 	Else []Stmt
 }
+type WhileStmt struct {
+	Cond Expr
+	Body []Stmt
+}
 
 func (*AssignStmt) stmtNode() {}
 func (*ExprStmt) stmtNode()   {}
 func (*IfStmt) stmtNode()     {}
+func (*WhileStmt) stmtNode()  {}
 
 type Program struct{ Stmts []Stmt }
 
 func (c *Compiler) Parse() *Program {
 	c.tokenPos = 0
 	c.usesArg = false
+	c.usesAtoi = false
 	c.usesPrint = false
 	c.usesPrintStr = false
 	prog := &Program{}
@@ -63,6 +71,9 @@ func (c *Compiler) parseStmt() Stmt {
 	if c.peek().Type == TOK_IDENT && c.peek().Name == "if" {
 		return c.parseIf()
 	}
+	if c.peek().Type == TOK_IDENT && c.peek().Name == "while" {
+		return c.parseWhile()
+	}
 	if c.peek().Type == TOK_IDENT && c.tokenPos+1 < len(c.tokens) && c.tokens[c.tokenPos+1].Type == TOK_ASSIGN {
 		name := c.consume(TOK_IDENT).Name
 		c.consume(TOK_ASSIGN)
@@ -75,6 +86,10 @@ func (c *Compiler) parseIf() *IfStmt {
 	c.consume(TOK_IDENT)
 	cond := c.parseExpr()
 	then := c.parseBlock()
+	saved := c.tokenPos
+	for c.peek().Type == TOK_SEMI {
+		c.consume(TOK_SEMI)
+	}
 	var els []Stmt
 	if c.peek().Type == TOK_IDENT && c.peek().Name == "else" {
 		c.consume(TOK_IDENT)
@@ -83,8 +98,17 @@ func (c *Compiler) parseIf() *IfStmt {
 		} else {
 			els = c.parseBlock()
 		}
+	} else {
+		c.tokenPos = saved
 	}
 	return &IfStmt{Cond: cond, Then: then, Else: els}
+}
+
+func (c *Compiler) parseWhile() *WhileStmt {
+	c.consume(TOK_IDENT)
+	cond := c.parseExpr()
+	body := c.parseBlock()
+	return &WhileStmt{Cond: cond, Body: body}
 }
 
 func (c *Compiler) parseBlock() []Stmt {
@@ -144,11 +168,6 @@ func (c *Compiler) parseFactor() Expr {
 	if c.peek().Type == TOK_STRING {
 		return &StrLit{Value: c.consume(TOK_STRING).Name}
 	}
-	if c.peek().Type == TOK_ARG {
-		tok := c.consume(TOK_ARG)
-		c.usesArg = true
-		return &ArgRef{Index: tok.Value}
-	}
 	if c.peek().Type == TOK_IDENT {
 		name := c.consume(TOK_IDENT).Name
 		if c.peek().Type == TOK_LPAREN {
@@ -158,6 +177,21 @@ func (c *Compiler) parseFactor() Expr {
 				args = append(args, c.parseExpr())
 			}
 			c.consume(TOK_RPAREN)
+			if name == "arg" {
+				if len(args) != 1 {
+					panic("arg takes 1 argument")
+				}
+				c.usesArg = true
+				c.usesAtoi = true
+				return &ArgRef{Index: args[0]}
+			}
+			if name == "narg" {
+				if len(args) != 0 {
+					panic("narg takes no arguments")
+				}
+				c.usesArg = true
+				return &NargExpr{}
+			}
 			if name == "print" || name == "println" {
 				if len(args) == 1 {
 					if _, ok := args[0].(*StrLit); ok {

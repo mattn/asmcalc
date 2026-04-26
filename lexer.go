@@ -29,7 +29,6 @@ const (
 	TOK_GT
 	TOK_GE
 	TOK_SEMI
-	TOK_ARG
 	TOK_STRING
 	TOK_EOF
 )
@@ -203,16 +202,6 @@ func (c *Compiler) Lex() {
 			}
 			c.pos++
 			c.tokens = append(c.tokens, Token{Type: TOK_STRING, Name: sb.String()})
-			continue
-		}
-		if ch == '$' {
-			c.pos++
-			value := 0
-			for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
-				value = value*10 + int(c.input[c.pos]-'0')
-				c.pos++
-			}
-			c.tokens = append(c.tokens, Token{Type: TOK_ARG, Value: value})
 			continue
 		}
 		panic(fmt.Sprintf("unknown char: %c", ch))

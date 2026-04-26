@@ -16,6 +16,7 @@ type Compiler struct {
 	varValues    map[string]int
 	args         []int
 	usesArg      bool
+	usesAtoi     bool
 	usesPrint    bool
 	usesPrintStr bool
 	strLits      []string
@@ -62,6 +63,14 @@ func (c *Compiler) evalStmt(s Stmt) int {
 			result = c.evalStmt(t)
 		}
 		return result
+	case *WhileStmt:
+		var result int
+		for c.evalExpr(s.Cond) != 0 {
+			for _, t := range s.Body {
+				result = c.evalStmt(t)
+			}
+		}
+		return result
 	}
 	panic("unknown stmt")
 }
@@ -71,10 +80,13 @@ func (c *Compiler) evalExpr(e Expr) int {
 	case *NumLit:
 		return e.Value
 	case *ArgRef:
-		if e.Index < 1 || e.Index > len(c.args) {
-			panic(fmt.Sprintf("arg $%d not provided", e.Index))
+		idx := c.evalExpr(e.Index)
+		if idx < 1 || idx > len(c.args) {
+			panic(fmt.Sprintf("arg(%d) not provided", idx))
 		}
-		return c.args[e.Index-1]
+		return c.args[idx-1]
+	case *NargExpr:
+		return len(c.args)
 	case *VarRef:
 		return c.varValues[e.Name]
 	case *CallExpr:
