@@ -54,6 +54,12 @@ func (c *Compiler) Lex() {
 			c.pos++
 			continue
 		}
+		if ch == '#' {
+			for c.pos < len(c.input) && c.input[c.pos] != '\n' {
+				c.pos++
+			}
+			continue
+		}
 		if unicode.IsDigit(rune(ch)) {
 			value := 0
 			for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {

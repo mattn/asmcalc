@@ -1,3 +1,4 @@
+# Print the N-th Fibonacci number. Usage: mame run examples/fib.mame N
 n = int(arg(1))
 a = 0
 b = 1

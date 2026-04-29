@@ -37,6 +37,10 @@ func TestLex(t *testing.T) {
 		{`"Fizz"`, []TokenType{TOK_STRING, TOK_EOF}},
 		{`"a\nb"`, []TokenType{TOK_STRING, TOK_EOF}},
 		{`println("Fizz")`, []TokenType{TOK_IDENT, TOK_LPAREN, TOK_STRING, TOK_RPAREN, TOK_EOF}},
+		{"# all comment", []TokenType{TOK_EOF}},
+		{"x # tail", []TokenType{TOK_IDENT, TOK_EOF}},
+		{"# c\nx", []TokenType{TOK_SEMI, TOK_IDENT, TOK_EOF}},
+		{"x=1 # tail\ny=2", []TokenType{TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_SEMI, TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_EOF}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -119,6 +123,8 @@ func TestEval(t *testing.T) {
 		{`len("")`, nil, 0},
 		{`len("ほげ")`, nil, 6},
 		{`x = "abc"; len(x)`, nil, 3},
+		{"# comment\n42", nil, 42},
+		{"x=1 # tail\nx+2", nil, 3},
 		{`println("Fizz")`, nil, 0},
 		{"1==1", nil, 1},
 		{"1==2", nil, 0},
