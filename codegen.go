@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const commentColumn = 32
+const (
+	commentColumn = 32
+	heapSize      = 1 << 20 // 1 MiB bump heap
+)
 
 func write(w io.Writer, code string, comment ...string) {
 	line := code
@@ -21,18 +24,17 @@ func write(w io.Writer, code string, comment ...string) {
 	w.Write([]byte(line + "\n"))
 }
 
-// callAligned emits a `call` instruction, padding RSP if the current expression
-// stack depth would leave it 8-misaligned. Each tagged value slot is 24 bytes,
-// so depth parity flips alignment.
-func (c *Compiler) callAligned(w io.Writer, target, comment string) {
-	if c.depth%2 != 0 {
-		write(w, "  subq $8, %rsp", "Align RSP for call")
-		write(w, "  call "+target, comment)
-		write(w, "  addq $8, %rsp", "Restore align")
-		return
-	}
-	write(w, "  call "+target, comment)
-}
+// Slot layout (16 bytes, every value uniform):
+//   +0  tag       (0 = INT, 1 = STR)
+//   +8  payload   (INT: the value; STR: ptr to heap object)
+//
+// Heap object (for both static literals and dynamic strings):
+//   +0  refcount  (placeholder, always 0 for now; reserved for future RC/GC)
+//   +8  len       (byte length)
+//   +16 bytes...  (UTF-8)
+//
+// The 16-byte slot keeps the stack naturally 16-aligned, so internal calls
+// don't need ad-hoc subq/addq dance.
 
 func (c *Compiler) emitProgram(w io.Writer) {
 	for _, stmt := range c.program.Stmts {
@@ -46,16 +48,12 @@ func (c *Compiler) emitStmt(w io.Writer, s Stmt) {
 		c.vars[s.Name] = true
 		c.emitExpr(w, s.Value)
 		write(w, "  popq %rax", "Pop payload")
-		write(w, "  popq %rcx", "Pop len")
 		write(w, "  popq %rbx", "Pop tag")
-		c.depth--
 		write(w, fmt.Sprintf("  movq %%rbx, var_%s(%%rip)", s.Name), "Store tag")
-		write(w, fmt.Sprintf("  movq %%rcx, var_%s+8(%%rip)", s.Name), "Store len")
-		write(w, fmt.Sprintf("  movq %%rax, var_%s+16(%%rip)", s.Name), "Store payload")
+		write(w, fmt.Sprintf("  movq %%rax, var_%s+8(%%rip)", s.Name), "Store payload")
 	case *ExprStmt:
 		c.emitExpr(w, s.X)
-		write(w, "  addq $24, %rsp", "Discard stmt result")
-		c.depth--
+		write(w, "  addq $16, %rsp", "Discard stmt result")
 	case *IfStmt:
 		c.emitIf(w, s)
 	case *WhileStmt:
@@ -69,8 +67,7 @@ func (c *Compiler) emitWhile(w io.Writer, s *WhileStmt) {
 	write(w, fmt.Sprintf(".Lwhile_top_%d:", id))
 	c.emitExpr(w, s.Cond)
 	write(w, "  popq %rax", "Pop condition payload")
-	write(w, "  addq $16, %rsp", "Discard len + tag")
-	c.depth--
+	write(w, "  addq $8, %rsp", "Discard tag")
 	write(w, "  testq %rax, %rax", "Test condition")
 	write(w, fmt.Sprintf("  jz .Lwhile_end_%d", id), "False -> exit loop")
 	for _, t := range s.Body {
@@ -85,8 +82,7 @@ func (c *Compiler) emitIf(w io.Writer, s *IfStmt) {
 	c.labelCnt++
 	c.emitExpr(w, s.Cond)
 	write(w, "  popq %rax", "Pop condition payload")
-	write(w, "  addq $16, %rsp", "Discard len + tag")
-	c.depth--
+	write(w, "  addq $8, %rsp", "Discard tag")
 	write(w, "  testq %rax, %rax", "Test condition")
 	if len(s.Else) > 0 {
 		write(w, fmt.Sprintf("  jz .Lif_else_%d", id), "False -> else")
@@ -112,39 +108,15 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 	switch e := e.(type) {
 	case *NumLit:
 		write(w, "  pushq $0", "Tag = INT")
-		write(w, "  pushq $0", "Len = 0 (unused)")
 		write(w, fmt.Sprintf("  movq $%d, %%rax", e.Value), "Load number")
 		write(w, "  pushq %rax", "Push value")
-		c.depth++
 	case *ArgRef:
 		c.emitExpr(w, e.Index)
-		write(w, "  popq %rax", "Pop arg index value")
-		write(w, "  addq $16, %rsp", "Discard len + tag")
-		c.depth--
-		if runtime.GOOS == "windows" {
-			write(w, "  movq %rax, %rcx", "idx -> arg1")
-			c.callAligned(w, "__arg_to_utf8", "argv[idx] -> UTF-8 (rax=ptr, rdx=len)")
-			write(w, "  pushq $1", "Tag = STR")
-			write(w, "  pushq %rdx", "Push len")
-			write(w, "  pushq %rax", "Push ptr")
-		} else {
-			id := c.labelCnt
-			c.labelCnt++
-			write(w, "  incq %rax", "N+1 (skip argc slot)")
-			write(w, "  movq (%rbp,%rax,8), %rcx", "argv[N] (UTF-8 ptr)")
-			write(w, "  movq %rcx, %rdi", "Walk from start")
-			write(w, fmt.Sprintf(".Largstrlen_%d:", id))
-			write(w, "  cmpb $0, (%rdi)", "Null byte?")
-			write(w, fmt.Sprintf("  je .Largstrlen_done_%d", id), "Done")
-			write(w, "  incq %rdi", "Next byte")
-			write(w, fmt.Sprintf("  jmp .Largstrlen_%d", id), "Loop")
-			write(w, fmt.Sprintf(".Largstrlen_done_%d:", id))
-			write(w, "  subq %rcx, %rdi", "len = end - start")
-			write(w, "  pushq $1", "Tag = STR")
-			write(w, "  pushq %rdi", "Push len")
-			write(w, "  pushq %rcx", "Push ptr")
-		}
-		c.depth++
+		write(w, "  popq %rdi", "idx -> arg1")
+		write(w, "  addq $8, %rsp", "Discard tag")
+		write(w, "  call __arg_get", "argv[idx] -> heap obj ptr in RAX")
+		write(w, "  pushq $1", "Tag = STR")
+		write(w, "  pushq %rax", "Push heap obj ptr")
 	case *NargExpr:
 		if runtime.GOOS == "windows" {
 			write(w, "  movq argc_storage(%rip), %rax", "argc")
@@ -153,37 +125,28 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		}
 		write(w, "  decq %rax", "Exclude program name")
 		write(w, "  pushq $0", "Tag = INT")
-		write(w, "  pushq $0", "Len = 0")
 		write(w, "  pushq %rax", "Push narg")
-		c.depth++
 	case *VarRef:
 		c.vars[e.Name] = true
 		write(w, fmt.Sprintf("  movq var_%s(%%rip), %%rbx", e.Name), "Load tag")
-		write(w, fmt.Sprintf("  movq var_%s+8(%%rip), %%rcx", e.Name), "Load len")
-		write(w, fmt.Sprintf("  movq var_%s+16(%%rip), %%rax", e.Name), "Load payload")
+		write(w, fmt.Sprintf("  movq var_%s+8(%%rip), %%rax", e.Name), "Load payload")
 		write(w, "  pushq %rbx", "Push tag")
-		write(w, "  pushq %rcx", "Push len")
 		write(w, "  pushq %rax", "Push payload")
-		c.depth++
 	case *CallExpr:
 		c.emitCall(w, e)
 	case *StrLit:
 		idx := len(c.strLits)
 		c.strLits = append(c.strLits, e.Value)
 		write(w, "  pushq $1", "Tag = STR")
-		write(w, fmt.Sprintf("  pushq $%d", len(e.Value)), "Length")
-		write(w, fmt.Sprintf("  leaq .Lstr_%d(%%rip), %%rax", idx), "String ptr")
-		write(w, "  pushq %rax", "Push ptr")
-		c.depth++
+		write(w, fmt.Sprintf("  leaq .Lstr_%d(%%rip), %%rax", idx), "Heap obj ptr")
+		write(w, "  pushq %rax", "Push payload")
 	case *BinOp:
 		c.emitExpr(w, e.L)
 		c.emitExpr(w, e.R)
 		write(w, "  popq %rax", "Get R payload")
-		write(w, "  addq $16, %rsp", "Discard R len + tag")
-		c.depth--
+		write(w, "  addq $8, %rsp", "Discard R tag")
 		write(w, "  popq %rbx", "Get L payload")
-		write(w, "  addq $16, %rsp", "Discard L len + tag")
-		c.depth--
+		write(w, "  addq $8, %rsp", "Discard L tag")
 		switch e.Op {
 		case TOK_PLUS:
 			write(w, "  addq %rbx, %rax", "Add them")
@@ -217,9 +180,7 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 			c.emitCmpSet(w, "setge", "L >= R")
 		}
 		write(w, "  pushq $0", "Tag = INT")
-		write(w, "  pushq $0", "Len = 0")
 		write(w, "  pushq %rax", "Save result value")
-		c.depth++
 	default:
 		panic("unknown expr")
 	}
@@ -238,15 +199,13 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 			panic(fmt.Sprintf("int takes 1 arg, got %d", len(e.Args)))
 		}
 		c.emitExpr(w, e.Args[0])
-		write(w, "  popq %rdi", "Pop ptr")
-		write(w, "  popq %rsi", "Pop len")
+		write(w, "  popq %rax", "Pop heap obj ptr")
 		write(w, "  addq $8, %rsp", "Discard tag")
-		c.depth--
-		c.callAligned(w, "__atoi", "Parse as integer")
+		write(w, "  movq 8(%rax), %rsi", "len from header")
+		write(w, "  leaq 16(%rax), %rdi", "bytes ptr from header")
+		write(w, "  call __atoi", "Parse as integer")
 		write(w, "  pushq $0", "Tag = INT")
-		write(w, "  pushq $0", "Len = 0")
 		write(w, "  pushq %rax", "Push value")
-		c.depth++
 		return
 	case "print", "println":
 		if len(e.Args) != 1 {
@@ -262,9 +221,7 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 				c.emitPrintNl(w)
 			}
 			write(w, "  pushq $0", "Tag = INT")
-			write(w, "  pushq $0", "Len = 0")
 			write(w, "  pushq $0", "Dummy result")
-			c.depth++
 			return
 		}
 		c.emitDynamicPrint(w, e.Args[0], e.Name == "println")
@@ -273,28 +230,28 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 	}
 }
 
-// emitDynamicPrint evaluates the single argument, pops the tagged value, then
-// dispatches at runtime: STR routes to __print_str(ptr,len), INT routes to
-// __print_int(value). Pushes a tagged INT result (the int value, or 0 if STR).
+// emitDynamicPrint evaluates the single argument, pops the tagged slot, then
+// dispatches at runtime: STR routes to __print_str(bytes_ptr, len) reading
+// from the heap header; INT routes to __print_int(value).
 func (c *Compiler) emitDynamicPrint(w io.Writer, arg Expr, isPrintln bool) {
 	c.usesPrint = true
 	c.usesPrintStr = true
 	c.emitExpr(w, arg)
-	write(w, "  popq %rax", "Pop payload (value or ptr)")
-	write(w, "  popq %rsi", "Pop len")
+	write(w, "  popq %rax", "Pop payload (value or heap ptr)")
 	write(w, "  popq %rbx", "Pop tag")
-	c.depth--
 	id := c.labelCnt
 	c.labelCnt++
 	write(w, "  testq %rbx, %rbx", "Tag == INT?")
 	write(w, fmt.Sprintf("  jz .Lprint_int_%d", id), "INT path")
+	// STR path: rax = heap obj ptr
 	if runtime.GOOS == "windows" {
-		write(w, "  movq %rax, %rcx", "ptr -> arg1")
-		write(w, "  movq %rsi, %rdx", "len -> arg2")
+		write(w, "  movq 8(%rax), %rdx", "len -> arg2")
+		write(w, "  leaq 16(%rax), %rcx", "bytes -> arg1")
 	} else {
-		write(w, "  movq %rax, %rdi", "ptr -> arg1")
+		write(w, "  movq 8(%rax), %rsi", "len -> arg2")
+		write(w, "  leaq 16(%rax), %rdi", "bytes -> arg1")
 	}
-	c.callAligned(w, "__print_str", "Print string")
+	write(w, "  call __print_str", "Print string")
 	write(w, "  xorq %rax, %rax", "STR path: result = 0")
 	write(w, fmt.Sprintf("  jmp .Lprint_done_%d", id), "Done")
 	write(w, fmt.Sprintf(".Lprint_int_%d:", id))
@@ -303,12 +260,10 @@ func (c *Compiler) emitDynamicPrint(w io.Writer, arg Expr, isPrintln bool) {
 	} else {
 		write(w, "  movq %rax, %rdi", "value -> arg1")
 	}
-	c.callAligned(w, "__print_int", "Print int (returns value in RAX)")
+	write(w, "  call __print_int", "Print int (returns value in RAX)")
 	write(w, fmt.Sprintf(".Lprint_done_%d:", id))
 	write(w, "  pushq $0", "Tag = INT")
-	write(w, "  pushq $0", "Len = 0")
 	write(w, "  pushq %rax", "Push result")
-	c.depth++
 	if isPrintln {
 		c.emitPrintNl(w)
 	}
@@ -316,13 +271,13 @@ func (c *Compiler) emitDynamicPrint(w io.Writer, arg Expr, isPrintln bool) {
 
 func (c *Compiler) emitPrintStrCall(w io.Writer, label string, length int) {
 	if runtime.GOOS == "windows" {
-		write(w, fmt.Sprintf("  leaq %s(%%rip), %%rcx", label), "String ptr")
+		write(w, fmt.Sprintf("  leaq %s+16(%%rip), %%rcx", label), "Bytes ptr (skip header)")
 		write(w, fmt.Sprintf("  movq $%d, %%rdx", length), "Length")
 	} else {
-		write(w, fmt.Sprintf("  leaq %s(%%rip), %%rdi", label), "String ptr")
+		write(w, fmt.Sprintf("  leaq %s+16(%%rip), %%rdi", label), "Bytes ptr (skip header)")
 		write(w, fmt.Sprintf("  movq $%d, %%rsi", length), "Length")
 	}
-	c.callAligned(w, "__print_str", "Print string")
+	write(w, "  call __print_str", "Print string")
 }
 
 func (c *Compiler) emitPrintNl(w io.Writer) {
@@ -333,13 +288,13 @@ func (c *Compiler) emitPrintNl(w io.Writer) {
 		write(w, "  leaq .Lnl(%rip), %rdi", "Newline ptr")
 		write(w, "  movq $1, %rsi", "Length 1")
 	}
-	c.callAligned(w, "__print_str", "Print newline")
+	write(w, "  call __print_str", "Print newline")
 }
 
 func (c *Compiler) emitBssVars(w io.Writer) {
 	for name := range c.vars {
 		write(w, fmt.Sprintf("var_%s:", name))
-		write(w, ".space 24", "Variable storage (tag + len + payload)")
+		write(w, ".space 16", "Variable storage (tag + payload)")
 	}
 }
 
@@ -355,6 +310,8 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, "  syscall", "Call kernel")
 	write(w, "")
 	c.emitAtoi(w)
+	c.emitArgGet(w)
+	c.emitAlloc(w)
 	c.emitPrintln(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
@@ -363,6 +320,7 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 		write(w, "buffer:")
 		write(w, ".space 32", "32-byte buffer for number")
 	}
+	c.emitHeapBss(w)
 	c.emitBssVars(w)
 	return nil
 }
@@ -383,7 +341,8 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "  call ExitProcess", "Exit")
 	write(w, "")
 	c.emitAtoi(w)
-	c.emitArgToUtf8(w)
+	c.emitArgGet(w)
+	c.emitAlloc(w)
 	c.emitPrintln(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
@@ -402,8 +361,19 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 		write(w, "argc_storage:")
 		write(w, ".space 8", "int argc")
 	}
+	c.emitHeapBss(w)
 	c.emitBssVars(w)
 	return nil
+}
+
+func (c *Compiler) emitHeapBss(w io.Writer) {
+	if !c.usesArg {
+		return
+	}
+	write(w, "__heap_off:")
+	write(w, ".space 8", "current bump offset (init 0)")
+	write(w, "__heap:")
+	write(w, fmt.Sprintf(".space %d", heapSize), "bump heap")
 }
 
 func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
@@ -451,47 +421,101 @@ func (c *Compiler) emitAtoi(w io.Writer) {
 	write(w, "")
 }
 
-// __arg_to_utf8(idx in %rcx) -> (ptr in %rax, byte len in %rdx). Windows only.
-// Converts the wide argv[idx] to a freshly heap-allocated UTF-8 buffer.
-func (c *Compiler) emitArgToUtf8(w io.Writer) {
-	if runtime.GOOS != "windows" || !c.usesArg {
+// __alloc(rdi=size) -> rax=ptr. BSS bump allocator. Leaf, never frees.
+func (c *Compiler) emitAlloc(w io.Writer) {
+	if !c.usesArg {
 		return
 	}
-	write(w, "__arg_to_utf8:")
-	write(w, "  subq $88, %rsp", "shadow(32) + 4 stack args(32) + 3 spills(24)")
+	write(w, "__alloc:")
+	write(w, "  movq __heap_off(%rip), %rax", "current offset")
+	write(w, "  leaq __heap(%rip), %rdx", "heap base")
+	write(w, "  addq %rdx, %rax", "ptr = base + offset")
+	write(w, "  addq %rdi, __heap_off(%rip)", "advance offset by size")
+	write(w, "  ret", "Return")
+	write(w, "")
+}
+
+// __arg_get(rdi=idx) -> rax=ptr to heap object [refcount, len, bytes].
+// Linux: copies argv[idx] (UTF-8) into freshly bump-allocated heap object.
+// Windows: WideCharToMultiByte the wide argv[idx] into bump-allocated object.
+func (c *Compiler) emitArgGet(w io.Writer) {
+	if !c.usesArg {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		c.emitArgGetWindows(w)
+		return
+	}
+	write(w, "__arg_get:")
+	write(w, "  incq %rdi", "N+1 (skip argc slot in argv frame)")
+	write(w, "  movq (%rbp,%rdi,8), %rsi", "argv[N] (UTF-8 ptr)")
+	write(w, "  movq %rsi, %rcx", "Walk from start")
+	write(w, "__arg_get_len:")
+	write(w, "  cmpb $0, (%rcx)", "Null byte?")
+	write(w, "  je __arg_get_len_done", "Done")
+	write(w, "  incq %rcx", "Next byte")
+	write(w, "  jmp __arg_get_len", "Loop")
+	write(w, "__arg_get_len_done:")
+	write(w, "  subq %rsi, %rcx", "rcx = len")
+	write(w, "  pushq %rsi", "save src ptr")
+	write(w, "  pushq %rcx", "save len")
+	write(w, "  movq %rcx, %rdi", "size = len")
+	write(w, "  addq $16, %rdi", "+ header (refcount + len)")
+	write(w, "  call __alloc", "rax = heap obj ptr")
+	write(w, "  popq %rcx", "len")
+	write(w, "  popq %rsi", "src ptr")
+	write(w, "  movq $0, (%rax)", "header.refcount = 0")
+	write(w, "  movq %rcx, 8(%rax)", "header.len")
+	write(w, "  leaq 16(%rax), %rdi", "dst = bytes start")
+	write(w, "  pushq %rax", "save heap obj ptr")
+	write(w, "  cld", "DF = 0 for forward copy")
+	write(w, "  rep movsb", "copy rcx bytes from rsi to rdi")
+	write(w, "  popq %rax", "restore heap obj ptr")
+	write(w, "  ret", "Return")
+	write(w, "")
+}
+
+func (c *Compiler) emitArgGetWindows(w io.Writer) {
+	// Frame: shadow(32) + 4 stack args(32) + 3 spills(24) = 88 bytes (16-aligned).
+	write(w, "__arg_get:")
+	write(w, "  subq $88, %rsp", "frame")
 	write(w, "  movq argv_ptr(%rip), %rax", "argv base")
-	write(w, "  movq (%rax,%rcx,8), %r10", "wide ptr argv[idx]")
+	write(w, "  movq (%rax,%rdi,8), %r10", "wide ptr argv[idx]")
 	write(w, "  movq %r10, 64(%rsp)", "spill wide ptr")
+	// 1st WideCharToMultiByte: query byte size (incl null terminator).
 	write(w, "  movq $65001, %rcx", "CP_UTF8")
-	write(w, "  xorq %rdx, %rdx", "dwFlags = 0")
+	write(w, "  xorq %rdx, %rdx", "dwFlags")
 	write(w, "  movq %r10, %r8", "lpWideCharStr")
 	write(w, "  movq $-1, %r9", "cchWideChar = -1 (null-term)")
 	write(w, "  movq $0, 32(%rsp)", "lpMultiByteStr = NULL")
-	write(w, "  movq $0, 40(%rsp)", "cbMultiByte = 0 (query size)")
+	write(w, "  movq $0, 40(%rsp)", "cbMultiByte = 0 (query)")
 	write(w, "  movq $0, 48(%rsp)", "lpDefaultChar = NULL")
 	write(w, "  movq $0, 56(%rsp)", "lpUsedDefaultChar = NULL")
 	write(w, "  call WideCharToMultiByte", "RAX = byte count incl null")
 	write(w, "  movq %rax, 72(%rsp)", "spill byte count")
-	write(w, "  call GetProcessHeap", "RAX = heap handle")
-	write(w, "  movq %rax, %rcx", "hHeap")
-	write(w, "  xorq %rdx, %rdx", "dwFlags = 0")
-	write(w, "  movq 72(%rsp), %r8", "dwBytes")
-	write(w, "  call HeapAlloc", "RAX = ptr")
-	write(w, "  movq %rax, 80(%rsp)", "spill ptr")
+	// __alloc(size = 16 (header) + (byteCount - 1) (bytes excl null))
+	//                = 15 + byteCount
+	write(w, "  leaq 15(%rax), %rdi", "alloc size = 16 + byteCount - 1")
+	write(w, "  call __alloc", "rax = heap obj ptr")
+	write(w, "  movq %rax, 80(%rsp)", "spill heap obj ptr")
+	write(w, "  movq $0, (%rax)", "header.refcount = 0")
+	write(w, "  movq 72(%rsp), %rdx", "byte count")
+	write(w, "  decq %rdx", "len = byteCount - 1")
+	write(w, "  movq %rdx, 8(%rax)", "header.len")
+	// 2nd WideCharToMultiByte: convert into heap+16
 	write(w, "  movq $65001, %rcx", "CP_UTF8")
-	write(w, "  xorq %rdx, %rdx", "dwFlags = 0")
+	write(w, "  xorq %rdx, %rdx", "dwFlags")
 	write(w, "  movq 64(%rsp), %r8", "lpWideCharStr")
 	write(w, "  movq $-1, %r9", "cchWideChar = -1")
-	write(w, "  movq 80(%rsp), %r10", "buf ptr")
+	write(w, "  movq 80(%rsp), %r10", "heap obj ptr")
+	write(w, "  addq $16, %r10", "bytes start")
 	write(w, "  movq %r10, 32(%rsp)", "lpMultiByteStr")
 	write(w, "  movq 72(%rsp), %r10", "byte count")
 	write(w, "  movq %r10, 40(%rsp)", "cbMultiByte")
 	write(w, "  movq $0, 48(%rsp)", "lpDefaultChar = NULL")
 	write(w, "  movq $0, 56(%rsp)", "lpUsedDefaultChar = NULL")
 	write(w, "  call WideCharToMultiByte", "Convert into buf")
-	write(w, "  movq 80(%rsp), %rax", "ptr")
-	write(w, "  movq 72(%rsp), %rdx", "byte count")
-	write(w, "  decq %rdx", "exclude null terminator")
+	write(w, "  movq 80(%rsp), %rax", "heap obj ptr")
 	write(w, "  addq $88, %rsp", "Restore stack")
 	write(w, "  ret", "Return")
 	write(w, "")
@@ -624,6 +648,8 @@ func (c *Compiler) emitData(w io.Writer) {
 	write(w, ".data")
 	for i, s := range c.strLits {
 		write(w, fmt.Sprintf(".Lstr_%d:", i))
+		write(w, ".quad 0", "refcount placeholder")
+		write(w, fmt.Sprintf(".quad %d", len(s)), "len")
 		write(w, fmt.Sprintf(".ascii %q", s))
 	}
 	if c.usesPrintStr {

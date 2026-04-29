@@ -22,7 +22,6 @@ type Compiler struct {
 	usesPrintStr bool
 	strLits      []string
 	labelCnt     int
-	depth        int
 }
 
 func NewCompiler(input string) *Compiler {
@@ -188,7 +187,6 @@ func (c *Compiler) Compile(w io.Writer) error {
 	c.vars = map[string]bool{}
 	c.strLits = nil
 	c.labelCnt = 0
-	c.depth = 0
 
 	if runtime.GOOS == "windows" {
 		return c.compileWindows(w)
