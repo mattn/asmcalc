@@ -122,16 +122,28 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		write(w, "  addq $16, %rsp", "Discard len + tag")
 		c.depth--
 		if runtime.GOOS == "windows" {
-			write(w, "  movq argv_ptr(%rip), %rcx", "argv base")
-			write(w, "  movq (%rcx,%rax,8), %rdi", "argv[N]")
+			write(w, "  movq %rax, %rcx", "idx -> arg1")
+			c.callAligned(w, "__arg_to_utf8", "argv[idx] -> UTF-8 (rax=ptr, rdx=len)")
+			write(w, "  pushq $1", "Tag = STR")
+			write(w, "  pushq %rdx", "Push len")
+			write(w, "  pushq %rax", "Push ptr")
 		} else {
+			id := c.labelCnt
+			c.labelCnt++
 			write(w, "  incq %rax", "N+1 (skip argc slot)")
-			write(w, "  movq (%rbp,%rax,8), %rdi", "argv[N]")
+			write(w, "  movq (%rbp,%rax,8), %rcx", "argv[N] (UTF-8 ptr)")
+			write(w, "  movq %rcx, %rdi", "Walk from start")
+			write(w, fmt.Sprintf(".Largstrlen_%d:", id))
+			write(w, "  cmpb $0, (%rdi)", "Null byte?")
+			write(w, fmt.Sprintf("  je .Largstrlen_done_%d", id), "Done")
+			write(w, "  incq %rdi", "Next byte")
+			write(w, fmt.Sprintf("  jmp .Largstrlen_%d", id), "Loop")
+			write(w, fmt.Sprintf(".Largstrlen_done_%d:", id))
+			write(w, "  subq %rcx, %rdi", "len = end - start")
+			write(w, "  pushq $1", "Tag = STR")
+			write(w, "  pushq %rdi", "Push len")
+			write(w, "  pushq %rcx", "Push ptr")
 		}
-		c.callAligned(w, "__atoi", "Parse as integer")
-		write(w, "  pushq $0", "Tag = INT")
-		write(w, "  pushq $0", "Len = 0")
-		write(w, "  pushq %rax", "Push value")
 		c.depth++
 	case *NargExpr:
 		if runtime.GOOS == "windows" {
@@ -221,6 +233,21 @@ func (c *Compiler) emitCmpSet(w io.Writer, setcc, comment string) {
 
 func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 	switch e.Name {
+	case "int":
+		if len(e.Args) != 1 {
+			panic(fmt.Sprintf("int takes 1 arg, got %d", len(e.Args)))
+		}
+		c.emitExpr(w, e.Args[0])
+		write(w, "  popq %rdi", "Pop ptr")
+		write(w, "  popq %rsi", "Pop len")
+		write(w, "  addq $8, %rsp", "Discard tag")
+		c.depth--
+		c.callAligned(w, "__atoi", "Parse as integer")
+		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq $0", "Len = 0")
+		write(w, "  pushq %rax", "Push value")
+		c.depth++
+		return
 	case "print", "println":
 		if len(e.Args) != 1 {
 			panic(fmt.Sprintf("%s takes 1 arg, got %d", e.Name, len(e.Args)))
@@ -356,6 +383,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "  call ExitProcess", "Exit")
 	write(w, "")
 	c.emitAtoi(w)
+	c.emitArgToUtf8(w)
 	c.emitPrintln(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
@@ -393,26 +421,26 @@ func (c *Compiler) emitAtoi(w io.Writer) {
 	if !c.usesAtoi {
 		return
 	}
-	if runtime.GOOS == "windows" {
-		c.emitAtoiWide(w)
-		return
-	}
 	write(w, "__atoi:")
 	write(w, "  xorq %rax, %rax", "result = 0")
 	write(w, "  xorq %rcx, %rcx", "sign flag = 0")
+	write(w, "  testq %rsi, %rsi", "Empty?")
+	write(w, "  jz __atoi_ret", "Done")
 	write(w, "  movzbq (%rdi), %rdx", "Load first byte")
 	write(w, "  cmpb $45, %dl", "'-'")
 	write(w, "  jne __atoi_loop", "Not '-': skip")
 	write(w, "  movq $1, %rcx", "negative")
 	write(w, "  incq %rdi", "Skip '-'")
+	write(w, "  decq %rsi", "len--")
 	write(w, "__atoi_loop:")
-	write(w, "  movzbq (%rdi), %rdx", "Load byte")
-	write(w, "  testb %dl, %dl", "Null terminator?")
+	write(w, "  testq %rsi, %rsi", "End?")
 	write(w, "  jz __atoi_done", "Done")
+	write(w, "  movzbq (%rdi), %rdx", "Load byte")
 	write(w, "  subq $48, %rdx", "'0'")
 	write(w, "  imulq $10, %rax", "result *= 10")
 	write(w, "  addq %rdx, %rax", "result += digit")
 	write(w, "  incq %rdi", "Advance")
+	write(w, "  decq %rsi", "len--")
 	write(w, "  jmp __atoi_loop", "Continue")
 	write(w, "__atoi_done:")
 	write(w, "  testq %rcx, %rcx", "Negative?")
@@ -423,29 +451,48 @@ func (c *Compiler) emitAtoi(w io.Writer) {
 	write(w, "")
 }
 
-func (c *Compiler) emitAtoiWide(w io.Writer) {
-	write(w, "__atoi:")
-	write(w, "  xorq %rax, %rax", "result = 0")
-	write(w, "  xorq %rcx, %rcx", "sign flag = 0")
-	write(w, "  movzwl (%rdi), %edx", "Load first wchar")
-	write(w, "  cmpw $45, %dx", "L'-'")
-	write(w, "  jne __atoi_loop", "Not '-': skip")
-	write(w, "  movq $1, %rcx", "negative")
-	write(w, "  addq $2, %rdi", "Skip '-'")
-	write(w, "__atoi_loop:")
-	write(w, "  movzwl (%rdi), %edx", "Load wchar")
-	write(w, "  testw %dx, %dx", "Null terminator?")
-	write(w, "  jz __atoi_done", "Done")
-	write(w, "  subq $48, %rdx", "L'0'")
-	write(w, "  imulq $10, %rax", "result *= 10")
-	write(w, "  addq %rdx, %rax", "result += digit")
-	write(w, "  addq $2, %rdi", "Advance")
-	write(w, "  jmp __atoi_loop", "Continue")
-	write(w, "__atoi_done:")
-	write(w, "  testq %rcx, %rcx", "Negative?")
-	write(w, "  jz __atoi_ret", "Skip negation")
-	write(w, "  negq %rax", "Apply sign")
-	write(w, "__atoi_ret:")
+// __arg_to_utf8(idx in %rcx) -> (ptr in %rax, byte len in %rdx). Windows only.
+// Converts the wide argv[idx] to a freshly heap-allocated UTF-8 buffer.
+func (c *Compiler) emitArgToUtf8(w io.Writer) {
+	if runtime.GOOS != "windows" || !c.usesArg {
+		return
+	}
+	write(w, "__arg_to_utf8:")
+	write(w, "  subq $88, %rsp", "shadow(32) + 4 stack args(32) + 3 spills(24)")
+	write(w, "  movq argv_ptr(%rip), %rax", "argv base")
+	write(w, "  movq (%rax,%rcx,8), %r10", "wide ptr argv[idx]")
+	write(w, "  movq %r10, 64(%rsp)", "spill wide ptr")
+	write(w, "  movq $65001, %rcx", "CP_UTF8")
+	write(w, "  xorq %rdx, %rdx", "dwFlags = 0")
+	write(w, "  movq %r10, %r8", "lpWideCharStr")
+	write(w, "  movq $-1, %r9", "cchWideChar = -1 (null-term)")
+	write(w, "  movq $0, 32(%rsp)", "lpMultiByteStr = NULL")
+	write(w, "  movq $0, 40(%rsp)", "cbMultiByte = 0 (query size)")
+	write(w, "  movq $0, 48(%rsp)", "lpDefaultChar = NULL")
+	write(w, "  movq $0, 56(%rsp)", "lpUsedDefaultChar = NULL")
+	write(w, "  call WideCharToMultiByte", "RAX = byte count incl null")
+	write(w, "  movq %rax, 72(%rsp)", "spill byte count")
+	write(w, "  call GetProcessHeap", "RAX = heap handle")
+	write(w, "  movq %rax, %rcx", "hHeap")
+	write(w, "  xorq %rdx, %rdx", "dwFlags = 0")
+	write(w, "  movq 72(%rsp), %r8", "dwBytes")
+	write(w, "  call HeapAlloc", "RAX = ptr")
+	write(w, "  movq %rax, 80(%rsp)", "spill ptr")
+	write(w, "  movq $65001, %rcx", "CP_UTF8")
+	write(w, "  xorq %rdx, %rdx", "dwFlags = 0")
+	write(w, "  movq 64(%rsp), %r8", "lpWideCharStr")
+	write(w, "  movq $-1, %r9", "cchWideChar = -1")
+	write(w, "  movq 80(%rsp), %r10", "buf ptr")
+	write(w, "  movq %r10, 32(%rsp)", "lpMultiByteStr")
+	write(w, "  movq 72(%rsp), %r10", "byte count")
+	write(w, "  movq %r10, 40(%rsp)", "cbMultiByte")
+	write(w, "  movq $0, 48(%rsp)", "lpDefaultChar = NULL")
+	write(w, "  movq $0, 56(%rsp)", "lpUsedDefaultChar = NULL")
+	write(w, "  call WideCharToMultiByte", "Convert into buf")
+	write(w, "  movq 80(%rsp), %rax", "ptr")
+	write(w, "  movq 72(%rsp), %rdx", "byte count")
+	write(w, "  decq %rdx", "exclude null terminator")
+	write(w, "  addq $88, %rsp", "Restore stack")
 	write(w, "  ret", "Return")
 	write(w, "")
 }

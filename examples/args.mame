@@ -1,0 +1,5 @@
+i = 1
+while i <= narg() {
+  println(arg(i))
+  i = i + 1
+}

@@ -86,7 +86,7 @@ func TestLexString(t *testing.T) {
 func TestEval(t *testing.T) {
 	tests := []struct {
 		expr string
-		args []int
+		args []string
 		want int
 	}{
 		{"1+2", nil, 3},
@@ -101,13 +101,16 @@ func TestEval(t *testing.T) {
 		{"x=10;x+5", nil, 15},
 		{"x=2;y=3;x*y+1", nil, 7},
 		{"x=5;x=x+1;x*2", nil, 12},
-		{"arg(1)+5", []int{10}, 15},
-		{"arg(1)*arg(2)", []int{3, 4}, 12},
-		{"x=arg(1);x*2+1", []int{7}, 15},
-		{"x=arg(1)\ny=arg(2)\nx*y+1\n", []int{6, 7}, 43},
-		{"narg()", []int{}, 0},
-		{"narg()", []int{1, 2, 3}, 3},
-		{"i=1;s=0;while i<=narg() {s=s+arg(i);i=i+1};s", []int{10, 20, 30}, 60},
+		{"int(arg(1))+5", []string{"10"}, 15},
+		{"int(arg(1))*int(arg(2))", []string{"3", "4"}, 12},
+		{"x=int(arg(1));x*2+1", []string{"7"}, 15},
+		{"x=int(arg(1))\ny=int(arg(2))\nx*y+1\n", []string{"6", "7"}, 43},
+		{"narg()", []string{}, 0},
+		{"narg()", []string{"1", "2", "3"}, 3},
+		{"i=1;s=0;while i<=narg() {s=s+int(arg(i));i=i+1};s", []string{"10", "20", "30"}, 60},
+		{`int("42")`, nil, 42},
+		{`int("-7")`, nil, -7},
+		{`int("0")`, nil, 0},
 		{`println("Fizz")`, nil, 0},
 		{"1==1", nil, 1},
 		{"1==2", nil, 0},
@@ -176,13 +179,14 @@ func TestCompile(t *testing.T) {
 		{"x=10;println(x+5)", nil, 15},
 		{"x=2;y=3;println(x*y+1)", nil, 7},
 		{"x=5;x=x+1;println(x*2)", nil, 12},
-		{"println(arg(1)+5)", []string{"10"}, 15},
-		{"println(arg(1)*arg(2))", []string{"3", "4"}, 12},
-		{"x=arg(1);println(x*2+1)", []string{"7"}, 15},
-		{"x=arg(1)\ny=arg(2)\nprintln(x*y+1)\n", []string{"6", "7"}, 43},
+		{"println(int(arg(1))+5)", []string{"10"}, 15},
+		{"println(int(arg(1))*int(arg(2)))", []string{"3", "4"}, 12},
+		{"x=int(arg(1));println(x*2+1)", []string{"7"}, 15},
+		{"x=int(arg(1))\ny=int(arg(2))\nprintln(x*y+1)\n", []string{"6", "7"}, 43},
 		{"println(narg())", []string{}, 0},
 		{"println(narg())", []string{"a", "b", "c"}, 3},
-		{"i=1;s=0;while i<=narg() {s=s+arg(i);i=i+1};println(s)", []string{"10", "20", "30"}, 60},
+		{"i=1;s=0;while i<=narg() {s=s+int(arg(i));i=i+1};println(s)", []string{"10", "20", "30"}, 60},
+		{`println(int("123")+1)`, nil, 124},
 		{"println(1==1)", nil, 1},
 		{"println(1==2)", nil, 0},
 		{"println(15%3==0)", nil, 1},

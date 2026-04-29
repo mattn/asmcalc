@@ -182,7 +182,6 @@ func (c *Compiler) parseFactor() Expr {
 					panic("arg takes 1 argument")
 				}
 				c.usesArg = true
-				c.usesAtoi = true
 				return &ArgRef{Index: args[0]}
 			}
 			if name == "narg" {
@@ -191,6 +190,12 @@ func (c *Compiler) parseFactor() Expr {
 				}
 				c.usesArg = true
 				return &NargExpr{}
+			}
+			if name == "int" {
+				if len(args) != 1 {
+					panic("int takes 1 argument")
+				}
+				c.usesAtoi = true
 			}
 			if name == "print" || name == "println" {
 				if len(args) == 1 {

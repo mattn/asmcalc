@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"strconv"
 )
 
 type Compiler struct {
@@ -14,7 +15,7 @@ type Compiler struct {
 	program      *Program
 	vars         map[string]bool
 	varValues    map[string]Value
-	args         []int
+	args         []string
 	usesArg      bool
 	usesAtoi     bool
 	usesPrint    bool
@@ -31,7 +32,7 @@ func NewCompiler(input string) *Compiler {
 	}
 }
 
-func (c *Compiler) Eval(args ...int) int {
+func (c *Compiler) Eval(args ...string) int {
 	if c.program == nil {
 		c.Parse()
 	}
@@ -85,7 +86,7 @@ func (c *Compiler) evalExpr(e Expr) Value {
 		if idx < 1 || idx > len(c.args) {
 			panic(fmt.Sprintf("arg(%d) not provided", idx))
 		}
-		return intVal(c.args[idx-1])
+		return strVal(c.args[idx-1])
 	case *NargExpr:
 		return intVal(len(c.args))
 	case *VarRef:
@@ -114,6 +115,19 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				fmt.Println(v.I)
 			}
 			return v
+		case "int":
+			if len(e.Args) != 1 {
+				panic(fmt.Sprintf("int takes 1 arg, got %d", len(e.Args)))
+			}
+			v := c.evalExpr(e.Args[0])
+			if v.Tag != TagStr {
+				panic("int() expects a string")
+			}
+			n, err := strconv.Atoi(v.S)
+			if err != nil {
+				panic(fmt.Sprintf("int(%q): %v", v.S, err))
+			}
+			return intVal(n)
 		}
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	case *StrLit:

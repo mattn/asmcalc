@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 
 	"github.com/mattn/mame"
 )
@@ -80,16 +79,7 @@ func cmdAsm(args []string) {
 func cmdEval(args []string) {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
 	compiler, runtimeArgs := loadCompiler(fs, args)
-	intArgs := make([]int, len(runtimeArgs))
-	for i, a := range runtimeArgs {
-		n, err := strconv.Atoi(a)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "arg $%d: %v\n", i+1, err)
-			os.Exit(1)
-		}
-		intArgs[i] = n
-	}
-	compiler.Eval(intArgs...)
+	compiler.Eval(runtimeArgs...)
 }
 
 func cmdRun(args []string) {
