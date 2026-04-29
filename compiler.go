@@ -13,7 +13,7 @@ type Compiler struct {
 	tokenPos     int
 	program      *Program
 	vars         map[string]bool
-	varValues    map[string]int
+	varValues    map[string]Value
 	args         []int
 	usesArg      bool
 	usesAtoi     bool
@@ -34,16 +34,16 @@ func (c *Compiler) Eval(args ...int) int {
 	if c.program == nil {
 		c.Parse()
 	}
-	c.varValues = map[string]int{}
+	c.varValues = map[string]Value{}
 	c.args = args
-	result := 0
+	var result Value
 	for _, stmt := range c.program.Stmts {
 		result = c.evalStmt(stmt)
 	}
-	return result
+	return result.I
 }
 
-func (c *Compiler) evalStmt(s Stmt) int {
+func (c *Compiler) evalStmt(s Stmt) Value {
 	switch s := s.(type) {
 	case *AssignStmt:
 		v := c.evalExpr(s.Value)
@@ -52,9 +52,9 @@ func (c *Compiler) evalStmt(s Stmt) int {
 	case *ExprStmt:
 		return c.evalExpr(s.X)
 	case *IfStmt:
-		var result int
+		var result Value
 		var branch []Stmt
-		if c.evalExpr(s.Cond) != 0 {
+		if c.evalExpr(s.Cond).I != 0 {
 			branch = s.Then
 		} else {
 			branch = s.Else
@@ -64,8 +64,8 @@ func (c *Compiler) evalStmt(s Stmt) int {
 		}
 		return result
 	case *WhileStmt:
-		var result int
-		for c.evalExpr(s.Cond) != 0 {
+		var result Value
+		for c.evalExpr(s.Cond).I != 0 {
 			for _, t := range s.Body {
 				result = c.evalStmt(t)
 			}
@@ -75,18 +75,18 @@ func (c *Compiler) evalStmt(s Stmt) int {
 	panic("unknown stmt")
 }
 
-func (c *Compiler) evalExpr(e Expr) int {
+func (c *Compiler) evalExpr(e Expr) Value {
 	switch e := e.(type) {
 	case *NumLit:
-		return e.Value
+		return intVal(e.Value)
 	case *ArgRef:
-		idx := c.evalExpr(e.Index)
+		idx := c.evalExpr(e.Index).I
 		if idx < 1 || idx > len(c.args) {
 			panic(fmt.Sprintf("arg(%d) not provided", idx))
 		}
-		return c.args[idx-1]
+		return intVal(c.args[idx-1])
 	case *NargExpr:
-		return len(c.args)
+		return intVal(len(c.args))
 	case *VarRef:
 		return c.varValues[e.Name]
 	case *CallExpr:
@@ -97,10 +97,10 @@ func (c *Compiler) evalExpr(e Expr) int {
 			}
 			if str, ok := e.Args[0].(*StrLit); ok {
 				fmt.Print(str.Value)
-				return 0
+				return intVal(0)
 			}
 			v := c.evalExpr(e.Args[0])
-			fmt.Print(v)
+			fmt.Print(v.I)
 			return v
 		case "println":
 			if len(e.Args) != 1 {
@@ -108,59 +108,59 @@ func (c *Compiler) evalExpr(e Expr) int {
 			}
 			if str, ok := e.Args[0].(*StrLit); ok {
 				fmt.Println(str.Value)
-				return 0
+				return intVal(0)
 			}
 			v := c.evalExpr(e.Args[0])
-			fmt.Println(v)
+			fmt.Println(v.I)
 			return v
 		}
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	case *StrLit:
 		panic("string literal can only appear as a println argument")
 	case *BinOp:
-		l := c.evalExpr(e.L)
-		r := c.evalExpr(e.R)
+		l := c.evalExpr(e.L).I
+		r := c.evalExpr(e.R).I
 		switch e.Op {
 		case TOK_PLUS:
-			return l + r
+			return intVal(l + r)
 		case TOK_MINUS:
-			return l - r
+			return intVal(l - r)
 		case TOK_MUL:
-			return l * r
+			return intVal(l * r)
 		case TOK_DIV:
-			return l / r
+			return intVal(l / r)
 		case TOK_MOD:
-			return l % r
+			return intVal(l % r)
 		case TOK_EQ:
 			if l == r {
-				return 1
+				return intVal(1)
 			}
-			return 0
+			return intVal(0)
 		case TOK_NE:
 			if l != r {
-				return 1
+				return intVal(1)
 			}
-			return 0
+			return intVal(0)
 		case TOK_LT:
 			if l < r {
-				return 1
+				return intVal(1)
 			}
-			return 0
+			return intVal(0)
 		case TOK_LE:
 			if l <= r {
-				return 1
+				return intVal(1)
 			}
-			return 0
+			return intVal(0)
 		case TOK_GT:
 			if l > r {
-				return 1
+				return intVal(1)
 			}
-			return 0
+			return intVal(0)
 		case TOK_GE:
 			if l >= r {
-				return 1
+				return intVal(1)
 			}
-			return 0
+			return intVal(0)
 		}
 	}
 	panic("unknown expr")

@@ -32,11 +32,13 @@ func (c *Compiler) emitStmt(w io.Writer, s Stmt) {
 	case *AssignStmt:
 		c.vars[s.Name] = true
 		c.emitExpr(w, s.Value)
-		write(w, "  popq %rax", "Read value")
-		write(w, fmt.Sprintf("  movq %%rax, var_%s(%%rip)", s.Name), "Store to variable")
+		write(w, "  popq %rax", "Pop value")
+		write(w, "  popq %rbx", "Pop tag")
+		write(w, fmt.Sprintf("  movq %%rbx, var_%s(%%rip)", s.Name), "Store tag")
+		write(w, fmt.Sprintf("  movq %%rax, var_%s+8(%%rip)", s.Name), "Store value")
 	case *ExprStmt:
 		c.emitExpr(w, s.X)
-		write(w, "  popq %rax", "Discard stmt result")
+		write(w, "  addq $16, %rsp", "Discard stmt result (tag + value)")
 	case *IfStmt:
 		c.emitIf(w, s)
 	case *WhileStmt:
@@ -49,7 +51,8 @@ func (c *Compiler) emitWhile(w io.Writer, s *WhileStmt) {
 	c.labelCnt++
 	write(w, fmt.Sprintf(".Lwhile_top_%d:", id))
 	c.emitExpr(w, s.Cond)
-	write(w, "  popq %rax", "Pop condition")
+	write(w, "  popq %rax", "Pop condition value")
+	write(w, "  addq $8, %rsp", "Discard tag")
 	write(w, "  testq %rax, %rax", "Test condition")
 	write(w, fmt.Sprintf("  jz .Lwhile_end_%d", id), "False -> exit loop")
 	for _, t := range s.Body {
@@ -63,7 +66,8 @@ func (c *Compiler) emitIf(w io.Writer, s *IfStmt) {
 	id := c.labelCnt
 	c.labelCnt++
 	c.emitExpr(w, s.Cond)
-	write(w, "  popq %rax", "Pop condition")
+	write(w, "  popq %rax", "Pop condition value")
+	write(w, "  addq $8, %rsp", "Discard tag")
 	write(w, "  testq %rax, %rax", "Test condition")
 	if len(s.Else) > 0 {
 		write(w, fmt.Sprintf("  jz .Lif_else_%d", id), "False -> else")
@@ -88,11 +92,13 @@ func (c *Compiler) emitIf(w io.Writer, s *IfStmt) {
 func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 	switch e := e.(type) {
 	case *NumLit:
+		write(w, "  pushq $0", "Tag = INT")
 		write(w, fmt.Sprintf("  movq $%d, %%rax", e.Value), "Load number")
-		write(w, "  pushq %rax", "Push to stack")
+		write(w, "  pushq %rax", "Push value")
 	case *ArgRef:
 		c.emitExpr(w, e.Index)
-		write(w, "  popq %rax", "Pop arg index")
+		write(w, "  popq %rax", "Pop arg index value")
+		write(w, "  addq $8, %rsp", "Discard tag")
 		if runtime.GOOS == "windows" {
 			write(w, "  movq argv_ptr(%rip), %rcx", "argv base")
 			write(w, "  movq (%rcx,%rax,8), %rdi", "argv[N]")
@@ -101,7 +107,8 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 			write(w, "  movq (%rbp,%rax,8), %rdi", "argv[N]")
 		}
 		write(w, "  call __atoi", "Parse as integer")
-		write(w, "  pushq %rax", "Push to stack")
+		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq %rax", "Push value")
 	case *NargExpr:
 		if runtime.GOOS == "windows" {
 			write(w, "  movq argc_storage(%rip), %rax", "argc")
@@ -109,11 +116,14 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 			write(w, "  movq (%rbp), %rax", "argc")
 		}
 		write(w, "  decq %rax", "Exclude program name")
+		write(w, "  pushq $0", "Tag = INT")
 		write(w, "  pushq %rax", "Push narg")
 	case *VarRef:
 		c.vars[e.Name] = true
-		write(w, fmt.Sprintf("  movq var_%s(%%rip), %%rax", e.Name), "Load variable")
-		write(w, "  pushq %rax", "Push to stack")
+		write(w, fmt.Sprintf("  movq var_%s(%%rip), %%rbx", e.Name), "Load tag")
+		write(w, fmt.Sprintf("  movq var_%s+8(%%rip), %%rax", e.Name), "Load value")
+		write(w, "  pushq %rbx", "Push tag")
+		write(w, "  pushq %rax", "Push value")
 	case *CallExpr:
 		c.emitCall(w, e)
 	case *StrLit:
@@ -121,8 +131,10 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 	case *BinOp:
 		c.emitExpr(w, e.L)
 		c.emitExpr(w, e.R)
-		write(w, "  popq %rax", "Get second operand")
-		write(w, "  popq %rbx", "Get first operand")
+		write(w, "  popq %rax", "Get second operand value")
+		write(w, "  addq $8, %rsp", "Discard tag")
+		write(w, "  popq %rbx", "Get first operand value")
+		write(w, "  addq $8, %rsp", "Discard tag")
 		switch e.Op {
 		case TOK_PLUS:
 			write(w, "  addq %rbx, %rax", "Add them")
@@ -155,7 +167,8 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		case TOK_GE:
 			c.emitCmpSet(w, "setge", "L >= R")
 		}
-		write(w, "  pushq %rax", "Save result")
+		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq %rax", "Save result value")
 	default:
 		panic("unknown expr")
 	}
@@ -184,26 +197,29 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		} else {
 			c.emitExpr(w, e.Args[0])
 			if runtime.GOOS == "windows" {
-				write(w, "  popq %rcx", "Arg into RCX (aligns RSP)")
+				write(w, "  popq %rcx", "Arg value into RCX")
 			} else {
-				write(w, "  popq %rdi", "Arg into RDI (aligns RSP)")
+				write(w, "  popq %rdi", "Arg value into RDI")
 			}
+			write(w, "  addq $8, %rsp", "Discard tag")
 			write(w, "  call __print_int", "Print int, returns value in RAX")
 		}
 		if e.Name == "println" {
 			if isStr {
 				c.emitPrintNl(w)
+				write(w, "  pushq $0", "Tag = INT")
 				write(w, "  pushq $0", "Push dummy expr result")
 			} else {
-				write(w, "  pushq %rax", "Save value across newline call")
-				write(w, "  subq $8, %rsp", "Align RSP for call")
+				write(w, "  pushq $0", "Tag = INT")
+				write(w, "  pushq %rax", "Push value (kept across nl call)")
 				c.emitPrintNl(w)
-				write(w, "  addq $8, %rsp", "Restore align")
 			}
 		} else {
 			if isStr {
+				write(w, "  pushq $0", "Tag = INT")
 				write(w, "  pushq $0", "Push dummy expr result")
 			} else {
+				write(w, "  pushq $0", "Tag = INT")
 				write(w, "  pushq %rax", "Push int value as expr result")
 			}
 		}
@@ -237,7 +253,7 @@ func (c *Compiler) emitPrintNl(w io.Writer) {
 func (c *Compiler) emitBssVars(w io.Writer) {
 	for name := range c.vars {
 		write(w, fmt.Sprintf("var_%s:", name))
-		write(w, ".space 8", "Variable storage")
+		write(w, ".space 16", "Variable storage (tag + value)")
 	}
 }
 
