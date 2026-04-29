@@ -1,5 +1,7 @@
+n = 100
+if narg() > 0 { n = int(arg(1)) }
 i = 1
-while i <= 100 {
+while i <= n {
   if i % 15 == 0 { println("FizzBuzz") }
   else if i % 3 == 0 { println("Fizz") }
   else if i % 5 == 0 { println("Buzz") }
