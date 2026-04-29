@@ -218,6 +218,17 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		write(w, "  pushq $1", "Tag = STR")
 		write(w, "  pushq %rax", "Push heap obj ptr")
 		return
+	case "len":
+		if len(e.Args) != 1 {
+			panic(fmt.Sprintf("len takes 1 arg, got %d", len(e.Args)))
+		}
+		c.emitExpr(w, e.Args[0])
+		write(w, "  popq %rax", "Pop heap obj ptr")
+		write(w, "  addq $8, %rsp", "Discard tag")
+		write(w, "  movq 8(%rax), %rax", "len from header")
+		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq %rax", "Push len")
+		return
 	case "print", "println":
 		if len(e.Args) != 1 {
 			panic(fmt.Sprintf("%s takes 1 arg, got %d", e.Name, len(e.Args)))

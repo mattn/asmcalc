@@ -141,6 +141,15 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				panic("str() expects an int")
 			}
 			return strVal(strconv.Itoa(v.I))
+		case "len":
+			if len(e.Args) != 1 {
+				panic(fmt.Sprintf("len takes 1 arg, got %d", len(e.Args)))
+			}
+			v := c.evalExpr(e.Args[0])
+			if v.Tag != TagStr {
+				panic("len() expects a string")
+			}
+			return intVal(len(v.S))
 		}
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	case *StrLit:
