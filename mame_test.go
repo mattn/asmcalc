@@ -126,6 +126,8 @@ func TestEval(t *testing.T) {
 		{"if 1==1 { x=10; x*2 }", nil, 20},
 		{"i=0; s=0; while i<5 { i=i+1; s=s+i }; s", nil, 15},
 		{"i=0; while i<3 { i=i+1 }; i", nil, 3},
+		{`x = "Fizz"; 42`, nil, 42},
+		{`x = "Fizz"; y = "Buzz"; 0`, nil, 0},
 	}
 
 	for _, tt := range tests {
@@ -137,6 +139,22 @@ func TestEval(t *testing.T) {
 				t.Errorf("Eval(%q) = %d, want %d", tt.expr, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEvalStringStorage(t *testing.T) {
+	c := NewCompiler(`x = "Fizz"`)
+	c.Lex()
+	c.Eval()
+	v, ok := c.varValues["x"]
+	if !ok {
+		t.Fatalf("var x not stored")
+	}
+	if v.Tag != TagStr {
+		t.Errorf("x.Tag = %d, want TagStr (%d)", v.Tag, TagStr)
+	}
+	if v.S != "Fizz" {
+		t.Errorf("x.S = %q, want %q", v.S, "Fizz")
 	}
 }
 
@@ -236,6 +254,74 @@ func TestCompile(t *testing.T) {
 
 			if got != tt.want {
 				t.Errorf("Compile(%q) = %d, want %d", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompileString(t *testing.T) {
+	tests := []struct {
+		expr string
+		want string
+	}{
+		{`x = "Fizz"; println(x)`, "Fizz\n"},
+		{`x = "Fizz"; y = "Buzz"; print(x); println(y)`, "FizzBuzz\n"},
+		{`x = "abc"; println(x); println(123)`, "abc\n123\n"},
+		{`x = "Fizz"; y = x; println(y)`, "Fizz\n"},
+	}
+
+	tmpDir := t.TempDir()
+
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			compiler := NewCompiler(tt.expr)
+			compiler.Lex()
+
+			var buf bytes.Buffer
+			if err := compiler.Compile(&buf); err != nil {
+				t.Fatalf("Compile failed: %v", err)
+			}
+
+			asmFile := filepath.Join(tmpDir, "test.s")
+			objFile := filepath.Join(tmpDir, "test.o")
+			exeFile := filepath.Join(tmpDir, "test")
+			if runtime.GOOS == "windows" {
+				exeFile += ".exe"
+			}
+
+			defer func() {
+				os.Remove(asmFile)
+				os.Remove(objFile)
+				os.Remove(exeFile)
+			}()
+
+			if err := os.WriteFile(asmFile, buf.Bytes(), 0644); err != nil {
+				t.Fatalf("WriteFile failed: %v", err)
+			}
+
+			asCmd := exec.Command("as", "-64", asmFile, "-o", objFile)
+			if out, err := asCmd.CombinedOutput(); err != nil {
+				t.Fatalf("as failed: %v\n%s", err, out)
+			}
+
+			var ldCmd *exec.Cmd
+			if runtime.GOOS == "windows" {
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32")
+			} else {
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile)
+			}
+			if out, err := ldCmd.CombinedOutput(); err != nil {
+				t.Fatalf("ld failed: %v\n%s", err, out)
+			}
+
+			runCmd := exec.Command(exeFile)
+			out, err := runCmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("execution failed: %v\n%s", err, out)
+			}
+
+			if string(out) != tt.want {
+				t.Errorf("Compile(%q) = %q, want %q", tt.expr, string(out), tt.want)
 			}
 		})
 	}

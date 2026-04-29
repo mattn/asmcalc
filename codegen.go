@@ -21,6 +21,19 @@ func write(w io.Writer, code string, comment ...string) {
 	w.Write([]byte(line + "\n"))
 }
 
+// callAligned emits a `call` instruction, padding RSP if the current expression
+// stack depth would leave it 8-misaligned. Each tagged value slot is 24 bytes,
+// so depth parity flips alignment.
+func (c *Compiler) callAligned(w io.Writer, target, comment string) {
+	if c.depth%2 != 0 {
+		write(w, "  subq $8, %rsp", "Align RSP for call")
+		write(w, "  call "+target, comment)
+		write(w, "  addq $8, %rsp", "Restore align")
+		return
+	}
+	write(w, "  call "+target, comment)
+}
+
 func (c *Compiler) emitProgram(w io.Writer) {
 	for _, stmt := range c.program.Stmts {
 		c.emitStmt(w, stmt)
@@ -32,13 +45,17 @@ func (c *Compiler) emitStmt(w io.Writer, s Stmt) {
 	case *AssignStmt:
 		c.vars[s.Name] = true
 		c.emitExpr(w, s.Value)
-		write(w, "  popq %rax", "Pop value")
+		write(w, "  popq %rax", "Pop payload")
+		write(w, "  popq %rcx", "Pop len")
 		write(w, "  popq %rbx", "Pop tag")
+		c.depth--
 		write(w, fmt.Sprintf("  movq %%rbx, var_%s(%%rip)", s.Name), "Store tag")
-		write(w, fmt.Sprintf("  movq %%rax, var_%s+8(%%rip)", s.Name), "Store value")
+		write(w, fmt.Sprintf("  movq %%rcx, var_%s+8(%%rip)", s.Name), "Store len")
+		write(w, fmt.Sprintf("  movq %%rax, var_%s+16(%%rip)", s.Name), "Store payload")
 	case *ExprStmt:
 		c.emitExpr(w, s.X)
-		write(w, "  addq $16, %rsp", "Discard stmt result (tag + value)")
+		write(w, "  addq $24, %rsp", "Discard stmt result")
+		c.depth--
 	case *IfStmt:
 		c.emitIf(w, s)
 	case *WhileStmt:
@@ -51,8 +68,9 @@ func (c *Compiler) emitWhile(w io.Writer, s *WhileStmt) {
 	c.labelCnt++
 	write(w, fmt.Sprintf(".Lwhile_top_%d:", id))
 	c.emitExpr(w, s.Cond)
-	write(w, "  popq %rax", "Pop condition value")
-	write(w, "  addq $8, %rsp", "Discard tag")
+	write(w, "  popq %rax", "Pop condition payload")
+	write(w, "  addq $16, %rsp", "Discard len + tag")
+	c.depth--
 	write(w, "  testq %rax, %rax", "Test condition")
 	write(w, fmt.Sprintf("  jz .Lwhile_end_%d", id), "False -> exit loop")
 	for _, t := range s.Body {
@@ -66,8 +84,9 @@ func (c *Compiler) emitIf(w io.Writer, s *IfStmt) {
 	id := c.labelCnt
 	c.labelCnt++
 	c.emitExpr(w, s.Cond)
-	write(w, "  popq %rax", "Pop condition value")
-	write(w, "  addq $8, %rsp", "Discard tag")
+	write(w, "  popq %rax", "Pop condition payload")
+	write(w, "  addq $16, %rsp", "Discard len + tag")
+	c.depth--
 	write(w, "  testq %rax, %rax", "Test condition")
 	if len(s.Else) > 0 {
 		write(w, fmt.Sprintf("  jz .Lif_else_%d", id), "False -> else")
@@ -93,12 +112,15 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 	switch e := e.(type) {
 	case *NumLit:
 		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq $0", "Len = 0 (unused)")
 		write(w, fmt.Sprintf("  movq $%d, %%rax", e.Value), "Load number")
 		write(w, "  pushq %rax", "Push value")
+		c.depth++
 	case *ArgRef:
 		c.emitExpr(w, e.Index)
 		write(w, "  popq %rax", "Pop arg index value")
-		write(w, "  addq $8, %rsp", "Discard tag")
+		write(w, "  addq $16, %rsp", "Discard len + tag")
+		c.depth--
 		if runtime.GOOS == "windows" {
 			write(w, "  movq argv_ptr(%rip), %rcx", "argv base")
 			write(w, "  movq (%rcx,%rax,8), %rdi", "argv[N]")
@@ -106,9 +128,11 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 			write(w, "  incq %rax", "N+1 (skip argc slot)")
 			write(w, "  movq (%rbp,%rax,8), %rdi", "argv[N]")
 		}
-		write(w, "  call __atoi", "Parse as integer")
+		c.callAligned(w, "__atoi", "Parse as integer")
 		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq $0", "Len = 0")
 		write(w, "  pushq %rax", "Push value")
+		c.depth++
 	case *NargExpr:
 		if runtime.GOOS == "windows" {
 			write(w, "  movq argc_storage(%rip), %rax", "argc")
@@ -117,24 +141,38 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		}
 		write(w, "  decq %rax", "Exclude program name")
 		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq $0", "Len = 0")
 		write(w, "  pushq %rax", "Push narg")
+		c.depth++
 	case *VarRef:
 		c.vars[e.Name] = true
 		write(w, fmt.Sprintf("  movq var_%s(%%rip), %%rbx", e.Name), "Load tag")
-		write(w, fmt.Sprintf("  movq var_%s+8(%%rip), %%rax", e.Name), "Load value")
+		write(w, fmt.Sprintf("  movq var_%s+8(%%rip), %%rcx", e.Name), "Load len")
+		write(w, fmt.Sprintf("  movq var_%s+16(%%rip), %%rax", e.Name), "Load payload")
 		write(w, "  pushq %rbx", "Push tag")
-		write(w, "  pushq %rax", "Push value")
+		write(w, "  pushq %rcx", "Push len")
+		write(w, "  pushq %rax", "Push payload")
+		c.depth++
 	case *CallExpr:
 		c.emitCall(w, e)
 	case *StrLit:
-		panic("string literal can only appear as a println argument")
+		idx := len(c.strLits)
+		c.strLits = append(c.strLits, e.Value)
+		c.usesPrintStr = true
+		write(w, "  pushq $1", "Tag = STR")
+		write(w, fmt.Sprintf("  pushq $%d", len(e.Value)), "Length")
+		write(w, fmt.Sprintf("  leaq .Lstr_%d(%%rip), %%rax", idx), "String ptr")
+		write(w, "  pushq %rax", "Push ptr")
+		c.depth++
 	case *BinOp:
 		c.emitExpr(w, e.L)
 		c.emitExpr(w, e.R)
-		write(w, "  popq %rax", "Get second operand value")
-		write(w, "  addq $8, %rsp", "Discard tag")
-		write(w, "  popq %rbx", "Get first operand value")
-		write(w, "  addq $8, %rsp", "Discard tag")
+		write(w, "  popq %rax", "Get R payload")
+		write(w, "  addq $16, %rsp", "Discard R len + tag")
+		c.depth--
+		write(w, "  popq %rbx", "Get L payload")
+		write(w, "  addq $16, %rsp", "Discard L len + tag")
+		c.depth--
 		switch e.Op {
 		case TOK_PLUS:
 			write(w, "  addq %rbx, %rax", "Add them")
@@ -168,7 +206,9 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 			c.emitCmpSet(w, "setge", "L >= R")
 		}
 		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq $0", "Len = 0")
 		write(w, "  pushq %rax", "Save result value")
+		c.depth++
 	default:
 		panic("unknown expr")
 	}
@@ -186,45 +226,65 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		if len(e.Args) != 1 {
 			panic(fmt.Sprintf("%s takes 1 arg, got %d", e.Name, len(e.Args)))
 		}
-		_, isStr := e.Args[0].(*StrLit)
-		if isStr {
-			str := e.Args[0].(*StrLit)
+		if str, ok := e.Args[0].(*StrLit); ok {
 			idx := len(c.strLits)
 			c.strLits = append(c.strLits, str.Value)
 			c.usesPrintStr = true
 			label := fmt.Sprintf(".Lstr_%d", idx)
 			c.emitPrintStrCall(w, label, len(str.Value))
-		} else {
-			c.emitExpr(w, e.Args[0])
-			if runtime.GOOS == "windows" {
-				write(w, "  popq %rcx", "Arg value into RCX")
-			} else {
-				write(w, "  popq %rdi", "Arg value into RDI")
-			}
-			write(w, "  addq $8, %rsp", "Discard tag")
-			write(w, "  call __print_int", "Print int, returns value in RAX")
-		}
-		if e.Name == "println" {
-			if isStr {
-				c.emitPrintNl(w)
-				write(w, "  pushq $0", "Tag = INT")
-				write(w, "  pushq $0", "Push dummy expr result")
-			} else {
-				write(w, "  pushq $0", "Tag = INT")
-				write(w, "  pushq %rax", "Push value (kept across nl call)")
+			if e.Name == "println" {
 				c.emitPrintNl(w)
 			}
-		} else {
-			if isStr {
-				write(w, "  pushq $0", "Tag = INT")
-				write(w, "  pushq $0", "Push dummy expr result")
-			} else {
-				write(w, "  pushq $0", "Tag = INT")
-				write(w, "  pushq %rax", "Push int value as expr result")
-			}
+			write(w, "  pushq $0", "Tag = INT")
+			write(w, "  pushq $0", "Len = 0")
+			write(w, "  pushq $0", "Dummy result")
+			c.depth++
+			return
 		}
+		c.emitDynamicPrint(w, e.Args[0], e.Name == "println")
 	default:
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
+	}
+}
+
+// emitDynamicPrint evaluates the single argument, pops the tagged value, then
+// dispatches at runtime: STR routes to __print_str(ptr,len), INT routes to
+// __print_int(value). Pushes a tagged INT result (the int value, or 0 if STR).
+func (c *Compiler) emitDynamicPrint(w io.Writer, arg Expr, isPrintln bool) {
+	c.usesPrint = true
+	c.usesPrintStr = true
+	c.emitExpr(w, arg)
+	write(w, "  popq %rax", "Pop payload (value or ptr)")
+	write(w, "  popq %rsi", "Pop len")
+	write(w, "  popq %rbx", "Pop tag")
+	c.depth--
+	id := c.labelCnt
+	c.labelCnt++
+	write(w, "  testq %rbx, %rbx", "Tag == INT?")
+	write(w, fmt.Sprintf("  jz .Lprint_int_%d", id), "INT path")
+	if runtime.GOOS == "windows" {
+		write(w, "  movq %rax, %rcx", "ptr -> arg1")
+		write(w, "  movq %rsi, %rdx", "len -> arg2")
+	} else {
+		write(w, "  movq %rax, %rdi", "ptr -> arg1")
+	}
+	c.callAligned(w, "__print_str", "Print string")
+	write(w, "  xorq %rax, %rax", "STR path: result = 0")
+	write(w, fmt.Sprintf("  jmp .Lprint_done_%d", id), "Done")
+	write(w, fmt.Sprintf(".Lprint_int_%d:", id))
+	if runtime.GOOS == "windows" {
+		write(w, "  movq %rax, %rcx", "value -> arg1")
+	} else {
+		write(w, "  movq %rax, %rdi", "value -> arg1")
+	}
+	c.callAligned(w, "__print_int", "Print int (returns value in RAX)")
+	write(w, fmt.Sprintf(".Lprint_done_%d:", id))
+	write(w, "  pushq $0", "Tag = INT")
+	write(w, "  pushq $0", "Len = 0")
+	write(w, "  pushq %rax", "Push result")
+	c.depth++
+	if isPrintln {
+		c.emitPrintNl(w)
 	}
 }
 
@@ -236,7 +296,7 @@ func (c *Compiler) emitPrintStrCall(w io.Writer, label string, length int) {
 		write(w, fmt.Sprintf("  leaq %s(%%rip), %%rdi", label), "String ptr")
 		write(w, fmt.Sprintf("  movq $%d, %%rsi", length), "Length")
 	}
-	write(w, "  call __print_str", "Print string")
+	c.callAligned(w, "__print_str", "Print string")
 }
 
 func (c *Compiler) emitPrintNl(w io.Writer) {
@@ -247,13 +307,13 @@ func (c *Compiler) emitPrintNl(w io.Writer) {
 		write(w, "  leaq .Lnl(%rip), %rdi", "Newline ptr")
 		write(w, "  movq $1, %rsi", "Length 1")
 	}
-	write(w, "  call __print_str", "Print newline")
+	c.callAligned(w, "__print_str", "Print newline")
 }
 
 func (c *Compiler) emitBssVars(w io.Writer) {
 	for name := range c.vars {
 		write(w, fmt.Sprintf("var_%s:", name))
-		write(w, ".space 16", "Variable storage (tag + value)")
+		write(w, ".space 24", "Variable storage (tag + len + payload)")
 	}
 }
 

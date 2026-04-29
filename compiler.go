@@ -21,6 +21,7 @@ type Compiler struct {
 	usesPrintStr bool
 	strLits      []string
 	labelCnt     int
+	depth        int
 }
 
 func NewCompiler(input string) *Compiler {
@@ -95,28 +96,28 @@ func (c *Compiler) evalExpr(e Expr) Value {
 			if len(e.Args) != 1 {
 				panic(fmt.Sprintf("print takes 1 arg, got %d", len(e.Args)))
 			}
-			if str, ok := e.Args[0].(*StrLit); ok {
-				fmt.Print(str.Value)
-				return intVal(0)
-			}
 			v := c.evalExpr(e.Args[0])
-			fmt.Print(v.I)
+			if v.Tag == TagStr {
+				fmt.Print(v.S)
+			} else {
+				fmt.Print(v.I)
+			}
 			return v
 		case "println":
 			if len(e.Args) != 1 {
 				panic(fmt.Sprintf("println takes 1 arg, got %d", len(e.Args)))
 			}
-			if str, ok := e.Args[0].(*StrLit); ok {
-				fmt.Println(str.Value)
-				return intVal(0)
-			}
 			v := c.evalExpr(e.Args[0])
-			fmt.Println(v.I)
+			if v.Tag == TagStr {
+				fmt.Println(v.S)
+			} else {
+				fmt.Println(v.I)
+			}
 			return v
 		}
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	case *StrLit:
-		panic("string literal can only appear as a println argument")
+		return strVal(e.Value)
 	case *BinOp:
 		l := c.evalExpr(e.L).I
 		r := c.evalExpr(e.R).I
@@ -173,6 +174,7 @@ func (c *Compiler) Compile(w io.Writer) error {
 	c.vars = map[string]bool{}
 	c.strLits = nil
 	c.labelCnt = 0
+	c.depth = 0
 
 	if runtime.GOOS == "windows" {
 		return c.compileWindows(w)
