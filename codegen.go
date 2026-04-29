@@ -333,6 +333,7 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, "")
 	c.emitStrToInt(w)
 	c.emitArgGet(w)
+	c.emitArgOob(w)
 	c.emitAlloc(w)
 	c.emitIntToStr(w)
 	c.emitPrintln(w)
@@ -365,6 +366,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "")
 	c.emitStrToInt(w)
 	c.emitArgGet(w)
+	c.emitArgOob(w)
 	c.emitAlloc(w)
 	c.emitIntToStr(w)
 	c.emitPrintln(w)
@@ -375,7 +377,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 		write(w, "buffer:")
 		write(w, ".space 32", "32-byte buffer for number")
 	}
-	if c.usesPrint || c.usesPrintStr {
+	if c.usesPrint || c.usesPrintStr || c.usesArg {
 		write(w, "written:")
 		write(w, ".space 8", "Bytes written")
 	}
@@ -523,6 +525,11 @@ func (c *Compiler) emitArgGet(w io.Writer) {
 		return
 	}
 	write(w, "__arg_get:")
+	write(w, "  cmpq $1, %rdi", "idx >= 1?")
+	write(w, "  jl __arg_oob", "out of range")
+	write(w, "  movq (%rbp), %rax", "argc")
+	write(w, "  cmpq %rax, %rdi", "idx < argc?")
+	write(w, "  jge __arg_oob", "out of range")
 	write(w, "  incq %rdi", "N+1 (skip argc slot in argv frame)")
 	write(w, "  movq (%rbp,%rdi,8), %rsi", "argv[N] (UTF-8 ptr)")
 	write(w, "  movq %rsi, %rcx", "Walk from start")
@@ -554,6 +561,11 @@ func (c *Compiler) emitArgGet(w io.Writer) {
 func (c *Compiler) emitArgGetWindows(w io.Writer) {
 	// Frame: shadow(32) + 4 stack args(32) + 3 spills(24) = 88 bytes (16-aligned).
 	write(w, "__arg_get:")
+	write(w, "  cmpq $1, %rdi", "idx >= 1?")
+	write(w, "  jl __arg_oob", "out of range")
+	write(w, "  movq argc_storage(%rip), %rax", "argc")
+	write(w, "  cmpq %rax, %rdi", "idx < argc?")
+	write(w, "  jge __arg_oob", "out of range")
 	write(w, "  subq $88, %rsp", "frame")
 	write(w, "  movq argv_ptr(%rip), %rax", "argv base")
 	write(w, "  movq (%rax,%rdi,8), %r10", "wide ptr argv[idx]")
@@ -594,6 +606,39 @@ func (c *Compiler) emitArgGetWindows(w io.Writer) {
 	write(w, "  movq 80(%rsp), %rax", "heap obj ptr")
 	write(w, "  addq $88, %rsp", "Restore stack")
 	write(w, "  ret", "Return")
+	write(w, "")
+}
+
+// __arg_oob writes "arg out of range\n" to stderr and exits 1.
+func (c *Compiler) emitArgOob(w io.Writer) {
+	if !c.usesArg {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		write(w, "__arg_oob:")
+		write(w, "  subq $40, %rsp", "shadow + 5th arg (no return path)")
+		write(w, "  movq $-12, %rcx", "STD_ERROR_HANDLE")
+		write(w, "  call GetStdHandle", "RAX = stderr")
+		write(w, "  movq %rax, %rcx", "Handle")
+		write(w, "  leaq .Lerr_oob(%rip), %rdx", "Buffer")
+		write(w, "  movq $17, %r8", "Length")
+		write(w, "  leaq written(%rip), %r9", "Bytes written")
+		write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
+		write(w, "  call WriteFile", "Write to stderr")
+		write(w, "  movq $1, %rcx", "Exit code 1")
+		write(w, "  call ExitProcess", "Exit (no return)")
+		write(w, "")
+		return
+	}
+	write(w, "__arg_oob:")
+	write(w, "  movq $1, %rax", "Syscall: write")
+	write(w, "  movq $2, %rdi", "stderr")
+	write(w, "  leaq .Lerr_oob(%rip), %rsi", "Buffer")
+	write(w, "  movq $17, %rdx", "Length")
+	write(w, "  syscall", "Call kernel")
+	write(w, "  movq $60, %rax", "Syscall: exit")
+	write(w, "  movq $1, %rdi", "Status 1")
+	write(w, "  syscall", "Call kernel (no return)")
 	write(w, "")
 }
 
@@ -718,7 +763,7 @@ func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
 }
 
 func (c *Compiler) emitData(w io.Writer) {
-	if len(c.strLits) == 0 && !c.usesPrintStr {
+	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg {
 		return
 	}
 	write(w, ".data")
@@ -731,5 +776,9 @@ func (c *Compiler) emitData(w io.Writer) {
 	if c.usesPrintStr {
 		write(w, ".Lnl:")
 		write(w, `.ascii "\n"`)
+	}
+	if c.usesArg {
+		write(w, ".Lerr_oob:")
+		write(w, `.ascii "arg out of range\n"`)
 	}
 }
