@@ -158,7 +158,6 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 	case *StrLit:
 		idx := len(c.strLits)
 		c.strLits = append(c.strLits, e.Value)
-		c.usesPrintStr = true
 		write(w, "  pushq $1", "Tag = STR")
 		write(w, fmt.Sprintf("  pushq $%d", len(e.Value)), "Length")
 		write(w, fmt.Sprintf("  leaq .Lstr_%d(%%rip), %%rax", idx), "String ptr")
@@ -572,7 +571,7 @@ func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
 }
 
 func (c *Compiler) emitData(w io.Writer) {
-	if !c.usesPrintStr {
+	if len(c.strLits) == 0 && !c.usesPrintStr {
 		return
 	}
 	write(w, ".data")
@@ -580,6 +579,8 @@ func (c *Compiler) emitData(w io.Writer) {
 		write(w, fmt.Sprintf(".Lstr_%d:", i))
 		write(w, fmt.Sprintf(".ascii %q", s))
 	}
-	write(w, ".Lnl:")
-	write(w, `.ascii "\n"`)
+	if c.usesPrintStr {
+		write(w, ".Lnl:")
+		write(w, `.ascii "\n"`)
+	}
 }
