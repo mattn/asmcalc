@@ -10,7 +10,7 @@ Supports both Linux and Windows.
 - Variables: `x = expr` — can hold int or string (no operations on strings yet)
 - Multiple statements separated by `;` or newlines
 - Command-line arguments via `arg(N)` (1-indexed, returns string) and `narg()` for the count
-- `int(s)` to parse a string as integer
+- `int(s)` to parse a string as integer; `str(n)` to format an int as string
 - `println(expr)` / `print(expr)` builtins: prints the value (int or string)
 
 ## Requirements

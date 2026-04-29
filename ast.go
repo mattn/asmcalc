@@ -17,13 +17,13 @@ type CallExpr struct {
 	Args []Expr
 }
 
-func (*NumLit) exprNode()    {}
-func (*StrLit) exprNode()    {}
-func (*ArgRef) exprNode()    {}
-func (*NargExpr) exprNode()  {}
-func (*VarRef) exprNode()    {}
-func (*BinOp) exprNode()     {}
-func (*CallExpr) exprNode()  {}
+func (*NumLit) exprNode()   {}
+func (*StrLit) exprNode()   {}
+func (*ArgRef) exprNode()   {}
+func (*NargExpr) exprNode() {}
+func (*VarRef) exprNode()   {}
+func (*BinOp) exprNode()    {}
+func (*CallExpr) exprNode() {}
 
 type AssignStmt struct {
 	Name  string
@@ -50,7 +50,7 @@ type Program struct{ Stmts []Stmt }
 func (c *Compiler) Parse() *Program {
 	c.tokenPos = 0
 	c.usesArg = false
-	c.usesAtoi = false
+	c.usesStrToInt = false
 	c.usesPrint = false
 	c.usesPrintStr = false
 	prog := &Program{}
@@ -195,7 +195,13 @@ func (c *Compiler) parseFactor() Expr {
 				if len(args) != 1 {
 					panic("int takes 1 argument")
 				}
-				c.usesAtoi = true
+				c.usesStrToInt = true
+			}
+			if name == "str" {
+				if len(args) != 1 {
+					panic("str takes 1 argument")
+				}
+				c.usesIntToStr = true
 			}
 			if name == "print" || name == "println" {
 				if len(args) == 1 {

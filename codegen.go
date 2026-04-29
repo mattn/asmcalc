@@ -203,9 +203,20 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		write(w, "  addq $8, %rsp", "Discard tag")
 		write(w, "  movq 8(%rax), %rsi", "len from header")
 		write(w, "  leaq 16(%rax), %rdi", "bytes ptr from header")
-		write(w, "  call __atoi", "Parse as integer")
+		write(w, "  call __str_to_int", "Parse as integer")
 		write(w, "  pushq $0", "Tag = INT")
 		write(w, "  pushq %rax", "Push value")
+		return
+	case "str":
+		if len(e.Args) != 1 {
+			panic(fmt.Sprintf("str takes 1 arg, got %d", len(e.Args)))
+		}
+		c.emitExpr(w, e.Args[0])
+		write(w, "  popq %rdi", "value -> arg1")
+		write(w, "  addq $8, %rsp", "Discard tag")
+		write(w, "  call __int_to_str", "Convert int -> heap STR obj in RAX")
+		write(w, "  pushq $1", "Tag = STR")
+		write(w, "  pushq %rax", "Push heap obj ptr")
 		return
 	case "print", "println":
 		if len(e.Args) != 1 {
@@ -309,9 +320,10 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, "  xorq %rdi, %rdi", "Exit code: 0")
 	write(w, "  syscall", "Call kernel")
 	write(w, "")
-	c.emitAtoi(w)
+	c.emitStrToInt(w)
 	c.emitArgGet(w)
 	c.emitAlloc(w)
+	c.emitIntToStr(w)
 	c.emitPrintln(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
@@ -340,9 +352,10 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "  xorq %rcx, %rcx", "Exit code 0")
 	write(w, "  call ExitProcess", "Exit")
 	write(w, "")
-	c.emitAtoi(w)
+	c.emitStrToInt(w)
 	c.emitArgGet(w)
 	c.emitAlloc(w)
+	c.emitIntToStr(w)
 	c.emitPrintln(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
@@ -367,7 +380,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 }
 
 func (c *Compiler) emitHeapBss(w io.Writer) {
-	if !c.usesArg {
+	if !c.usesHeap() {
 		return
 	}
 	write(w, "__heap_off:")
@@ -387,43 +400,43 @@ func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
 	write(w, "  movq %rax, argv_ptr(%rip)", "Save argv pointer")
 }
 
-func (c *Compiler) emitAtoi(w io.Writer) {
-	if !c.usesAtoi {
+func (c *Compiler) emitStrToInt(w io.Writer) {
+	if !c.usesStrToInt {
 		return
 	}
-	write(w, "__atoi:")
+	write(w, "__str_to_int:")
 	write(w, "  xorq %rax, %rax", "result = 0")
 	write(w, "  xorq %rcx, %rcx", "sign flag = 0")
 	write(w, "  testq %rsi, %rsi", "Empty?")
-	write(w, "  jz __atoi_ret", "Done")
+	write(w, "  jz __str_to_int_ret", "Done")
 	write(w, "  movzbq (%rdi), %rdx", "Load first byte")
 	write(w, "  cmpb $45, %dl", "'-'")
-	write(w, "  jne __atoi_loop", "Not '-': skip")
+	write(w, "  jne __str_to_int_loop", "Not '-': skip")
 	write(w, "  movq $1, %rcx", "negative")
 	write(w, "  incq %rdi", "Skip '-'")
 	write(w, "  decq %rsi", "len--")
-	write(w, "__atoi_loop:")
+	write(w, "__str_to_int_loop:")
 	write(w, "  testq %rsi, %rsi", "End?")
-	write(w, "  jz __atoi_done", "Done")
+	write(w, "  jz __str_to_int_done", "Done")
 	write(w, "  movzbq (%rdi), %rdx", "Load byte")
 	write(w, "  subq $48, %rdx", "'0'")
 	write(w, "  imulq $10, %rax", "result *= 10")
 	write(w, "  addq %rdx, %rax", "result += digit")
 	write(w, "  incq %rdi", "Advance")
 	write(w, "  decq %rsi", "len--")
-	write(w, "  jmp __atoi_loop", "Continue")
-	write(w, "__atoi_done:")
+	write(w, "  jmp __str_to_int_loop", "Continue")
+	write(w, "__str_to_int_done:")
 	write(w, "  testq %rcx, %rcx", "Negative?")
-	write(w, "  jz __atoi_ret", "Skip negation")
+	write(w, "  jz __str_to_int_ret", "Skip negation")
 	write(w, "  negq %rax", "Apply sign")
-	write(w, "__atoi_ret:")
+	write(w, "__str_to_int_ret:")
 	write(w, "  ret", "Return")
 	write(w, "")
 }
 
 // __alloc(rdi=size) -> rax=ptr. BSS bump allocator. Leaf, never frees.
 func (c *Compiler) emitAlloc(w io.Writer) {
-	if !c.usesArg {
+	if !c.usesHeap() {
 		return
 	}
 	write(w, "__alloc:")
@@ -431,6 +444,58 @@ func (c *Compiler) emitAlloc(w io.Writer) {
 	write(w, "  leaq __heap(%rip), %rdx", "heap base")
 	write(w, "  addq %rdx, %rax", "ptr = base + offset")
 	write(w, "  addq %rdi, __heap_off(%rip)", "advance offset by size")
+	write(w, "  ret", "Return")
+	write(w, "")
+}
+
+// __int_to_str(rdi=value) -> rax=ptr to heap obj. Renders the int as ASCII
+// into a stack buffer, then bump-allocates a [refcount,len,bytes] object and
+// copies. Frame: 32B buffer + 24B spills = 56 (keeps RSP 16-aligned).
+func (c *Compiler) emitIntToStr(w io.Writer) {
+	if !c.usesIntToStr {
+		return
+	}
+	write(w, "__int_to_str:")
+	write(w, "  subq $56, %rsp", "32B buffer + 24B spills")
+	write(w, "  movq %rdi, %r10", "Save original (for sign check)")
+	write(w, "  movq %rdi, %rax", "value")
+	write(w, "  testq %rax, %rax", "Check sign")
+	write(w, "  jns .Lits_abs", "Non-negative: skip negation")
+	write(w, "  negq %rax", "Absolute value")
+	write(w, ".Lits_abs:")
+	write(w, "  movq $10, %r8", "Base 10")
+	write(w, "  leaq 31(%rsp), %r9", "Last byte of buffer")
+	write(w, ".Lits_conv:")
+	write(w, "  xorq %rdx, %rdx", "Clear RDX")
+	write(w, "  divq %r8", "RAX / 10")
+	write(w, "  addb $48, %dl", "Digit to ASCII")
+	write(w, "  movb %dl, (%r9)", "Store digit")
+	write(w, "  decq %r9", "Move back")
+	write(w, "  testq %rax, %rax", "More digits?")
+	write(w, "  jnz .Lits_conv", "Continue")
+	write(w, "  testq %r10, %r10", "Original negative?")
+	write(w, "  jns .Lits_pos", "Non-negative: skip sign")
+	write(w, "  movb $45, (%r9)", "'-' sign")
+	write(w, "  decq %r9", "Move back")
+	write(w, ".Lits_pos:")
+	write(w, "  incq %r9", "First char")
+	write(w, "  leaq 32(%rsp), %rcx", "Past end of buffer")
+	write(w, "  subq %r9, %rcx", "rcx = length")
+	write(w, "  movq %r9, 32(%rsp)", "Spill chars ptr")
+	write(w, "  movq %rcx, 40(%rsp)", "Spill length")
+	write(w, "  movq %rcx, %rdi", "size = length")
+	write(w, "  addq $16, %rdi", "+ header")
+	write(w, "  call __alloc", "rax = heap obj ptr")
+	write(w, "  movq %rax, 48(%rsp)", "Spill heap obj ptr")
+	write(w, "  movq $0, (%rax)", "header.refcount = 0")
+	write(w, "  movq 40(%rsp), %rcx", "length")
+	write(w, "  movq %rcx, 8(%rax)", "header.len")
+	write(w, "  movq 32(%rsp), %rsi", "src = chars ptr")
+	write(w, "  leaq 16(%rax), %rdi", "dst = bytes start")
+	write(w, "  cld", "DF = 0")
+	write(w, "  rep movsb", "copy rcx bytes")
+	write(w, "  movq 48(%rsp), %rax", "heap obj ptr")
+	write(w, "  addq $56, %rsp", "Restore stack")
 	write(w, "  ret", "Return")
 	write(w, "")
 }

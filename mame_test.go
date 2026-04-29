@@ -111,6 +111,10 @@ func TestEval(t *testing.T) {
 		{`int("42")`, nil, 42},
 		{`int("-7")`, nil, -7},
 		{`int("0")`, nil, 0},
+		{`int(str(42))`, nil, 42},
+		{`int(str(-7))`, nil, -7},
+		{`int(str(0))`, nil, 0},
+		{`int(str(1+2*3))`, nil, 7},
 		{`println("Fizz")`, nil, 0},
 		{"1==1", nil, 1},
 		{"1==2", nil, 0},
@@ -272,6 +276,11 @@ func TestCompileString(t *testing.T) {
 		{`x = "Fizz"; y = "Buzz"; print(x); println(y)`, "FizzBuzz\n"},
 		{`x = "abc"; println(x); println(123)`, "abc\n123\n"},
 		{`x = "Fizz"; y = x; println(y)`, "Fizz\n"},
+		{`println(str(42))`, "42\n"},
+		{`println(str(-7))`, "-7\n"},
+		{`println(str(0))`, "0\n"},
+		{`x = str(123); println(x)`, "123\n"},
+		{`x = str(7 * 6); println(x)`, "42\n"},
 	}
 
 	tmpDir := t.TempDir()

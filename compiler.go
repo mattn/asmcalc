@@ -17,11 +17,16 @@ type Compiler struct {
 	varValues    map[string]Value
 	args         []string
 	usesArg      bool
-	usesAtoi     bool
 	usesPrint    bool
 	usesPrintStr bool
+	usesStrToInt bool
+	usesIntToStr bool
 	strLits      []string
 	labelCnt     int
+}
+
+func (c *Compiler) usesHeap() bool {
+	return c.usesArg || c.usesIntToStr
 }
 
 func NewCompiler(input string) *Compiler {
@@ -127,6 +132,15 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				panic(fmt.Sprintf("int(%q): %v", v.S, err))
 			}
 			return intVal(n)
+		case "str":
+			if len(e.Args) != 1 {
+				panic(fmt.Sprintf("str takes 1 arg, got %d", len(e.Args)))
+			}
+			v := c.evalExpr(e.Args[0])
+			if v.Tag != TagInt {
+				panic("str() expects an int")
+			}
+			return strVal(strconv.Itoa(v.I))
 		}
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	case *StrLit:
