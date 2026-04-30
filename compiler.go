@@ -19,6 +19,7 @@ type Compiler struct {
 	usesArg        bool
 	usesPrint      bool
 	usesPrintStr   bool
+	usesPrintFloat bool
 	usesStrToInt   bool
 	usesIntToStr   bool
 	usesStrToFloat bool
@@ -126,9 +127,12 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				panic(fmt.Sprintf("print takes 1 arg, got %d", len(e.Args)))
 			}
 			v := c.evalExpr(e.Args[0])
-			if v.Tag == TagStr {
+			switch v.Tag {
+			case TagStr:
 				fmt.Print(v.S)
-			} else {
+			case TagFloat:
+				fmt.Printf("%.6f", v.F)
+			default:
 				fmt.Print(v.I)
 			}
 			return v
@@ -137,9 +141,12 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				panic(fmt.Sprintf("println takes 1 arg, got %d", len(e.Args)))
 			}
 			v := c.evalExpr(e.Args[0])
-			if v.Tag == TagStr {
+			switch v.Tag {
+			case TagStr:
 				fmt.Println(v.S)
-			} else {
+			case TagFloat:
+				fmt.Printf("%.6f\n", v.F)
+			default:
 				fmt.Println(v.I)
 			}
 			return v

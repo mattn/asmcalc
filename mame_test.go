@@ -335,6 +335,16 @@ func TestCompileString(t *testing.T) {
 		{`println(str(0))`, "0\n"},
 		{`x = str(123); println(x)`, "123\n"},
 		{`x = str(7 * 6); println(x)`, "42\n"},
+		{`println(float("3.14"))`, "3.140000\n"},
+		{`println(float("-2.5"))`, "-2.500000\n"},
+		{`println(float("0"))`, "0.000000\n"},
+		{`println(float("42"))`, "42.000000\n"},
+		{`println(float(".5"))`, "0.500000\n"},
+		{`println(float("100.001"))`, "100.001000\n"},
+		{`println(float("-0.0001"))`, "-0.000100\n"},
+		{`println(float("4.9999999"))`, "5.000000\n"},
+		{`x = float("1.25"); println(x)`, "1.250000\n"},
+		{`print(float("1.5")); println(float("2.5"))`, "1.5000002.500000\n"},
 	}
 
 	tmpDir := t.TempDir()

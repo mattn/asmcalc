@@ -301,18 +301,23 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 }
 
 // emitDynamicPrint evaluates the single argument, pops the tagged slot, then
-// dispatches at runtime: STR routes to __print_str(bytes_ptr, len) reading
-// from the heap header; INT routes to __print_int(value).
+// dispatches at runtime: INT routes to __print_int(value); STR routes to
+// __print_str(bytes_ptr, len) via the heap header; FLOAT routes to
+// __print_float(double in xmm0) which renders [-]int.<6digits> through
+// __print_str.
 func (c *Compiler) emitDynamicPrint(w io.Writer, arg Expr, isPrintln bool) {
 	c.usesPrint = true
 	c.usesPrintStr = true
+	c.usesPrintFloat = true
 	c.emitExpr(w, arg)
-	write(w, "  popq %rax", "Pop payload (value or heap ptr)")
+	write(w, "  popq %rax", "Pop payload (value, heap ptr, or double bits)")
 	write(w, "  popq %rbx", "Pop tag")
 	id := c.labelCnt
 	c.labelCnt++
 	write(w, "  testq %rbx, %rbx", "Tag == INT?")
 	write(w, fmt.Sprintf("  jz .Lprint_int_%d", id), "INT path")
+	write(w, "  cmpq $2, %rbx", "Tag == FLOAT?")
+	write(w, fmt.Sprintf("  je .Lprint_float_%d", id), "FLOAT path")
 	// STR path: rax = heap obj ptr
 	if runtime.GOOS == "windows" {
 		write(w, "  movq 8(%rax), %rdx", "len -> arg2")
@@ -331,6 +336,11 @@ func (c *Compiler) emitDynamicPrint(w io.Writer, arg Expr, isPrintln bool) {
 		write(w, "  movq %rax, %rdi", "value -> arg1")
 	}
 	write(w, "  call __print_int", "Print int (returns value in RAX)")
+	write(w, fmt.Sprintf("  jmp .Lprint_done_%d", id), "Done")
+	write(w, fmt.Sprintf(".Lprint_float_%d:", id))
+	write(w, "  movq %rax, %xmm0", "double bits -> xmm0")
+	write(w, "  call __print_float", "Print float")
+	write(w, "  xorq %rax, %rax", "FLOAT path: result = 0")
 	write(w, fmt.Sprintf(".Lprint_done_%d:", id))
 	write(w, "  pushq $0", "Tag = INT")
 	write(w, "  pushq %rax", "Push result")
@@ -387,10 +397,11 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	c.emitAlloc(w)
 	c.emitIntToStr(w)
 	c.emitPrintln(w)
+	c.emitPrintFloat(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
 	write(w, ".bss")
-	if c.usesPrint {
+	if c.usesPrint || c.usesPrintFloat {
 		write(w, "buffer:")
 		write(w, ".space 32", "32-byte buffer for number")
 	}
@@ -422,10 +433,11 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	c.emitAlloc(w)
 	c.emitIntToStr(w)
 	c.emitPrintln(w)
+	c.emitPrintFloat(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
 	write(w, ".bss")
-	if c.usesPrint {
+	if c.usesPrint || c.usesPrintFloat {
 		write(w, "buffer:")
 		write(w, ".space 32", "32-byte buffer for number")
 	}
@@ -465,11 +477,8 @@ func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
 	write(w, "  movq %rax, argv_ptr(%rip)", "Save argv pointer")
 }
 
-// __str_to_float(rdi=ptr, rsi=len) -> xmm0=double. Adapted from draft/atof.s
-// to consume a length-bounded buffer (no null terminator). Handles optional
-// leading spaces/tabs, an optional sign, an integer part, and an optional
-// fractional part. No exponent support (matches the draft). Panics via
-// __atof_invalid when no digit is consumed or trailing bytes remain.
+// __str_to_float(rdi=ptr, rsi=len) -> xmm0=double. Adapted from draft/atof.s.
+// Panics on no-digit / trailing-byte inputs. No exponent support.
 func (c *Compiler) emitStrToFloat(w io.Writer) {
 	if !c.usesStrToFloat {
 		return
@@ -942,6 +951,91 @@ func (c *Compiler) emitPrintlnWindows(w io.Writer) {
 	write(w, "")
 }
 
+// __print_float(xmm0=double) renders [-]<int>.<6 frac> into `buffer` and
+// calls __print_str. Format matches Go's %.6f.
+func (c *Compiler) emitPrintFloat(w io.Writer) {
+	if !c.usesPrintFloat {
+		return
+	}
+	write(w, "__print_float:")
+	if runtime.GOOS == "windows" {
+		write(w, "  subq $56, %rsp")
+	} else {
+		write(w, "  subq $8, %rsp", "Align rsp for sub-call")
+	}
+	write(w, "  movq %xmm0, %rax")
+	write(w, "  testq %rax, %rax", "Sign bit?")
+	write(w, "  jns .Lpf_pos")
+	write(w, "  movl $1, %r11d", "neg_flag = 1")
+	write(w, "  movsd .Lpf_neg_one(%rip), %xmm1")
+	write(w, "  mulsd %xmm1, %xmm0")
+	write(w, "  jmp .Lpf_abs_done")
+	write(w, ".Lpf_pos:")
+	write(w, "  xorl %r11d, %r11d")
+	write(w, ".Lpf_abs_done:")
+	write(w, "  cvttsd2si %xmm0, %r10", "Integer part (truncate)")
+	write(w, "  cvtsi2sd %r10, %xmm1")
+	write(w, "  subsd %xmm1, %xmm0", "xmm0 = fractional")
+	write(w, "  movsd .Lpf_million(%rip), %xmm1")
+	write(w, "  mulsd %xmm1, %xmm0")
+	write(w, "  cvtsd2si %xmm0, %rcx", "round-to-nearest-even (matches %.6f)")
+	write(w, "  cmpq $1000000, %rcx")
+	write(w, "  jl .Lpf_no_carry")
+	write(w, "  subq $1000000, %rcx", "Carry (e.g. 4.9999999 -> 5.000000)")
+	write(w, "  incq %r10")
+	write(w, ".Lpf_no_carry:")
+	write(w, "  leaq buffer+31(%rip), %r9", "Write right-to-left from last byte")
+	write(w, "  movq $10, %rdi")
+	write(w, "  movq %rcx, %rax")
+	write(w, "  movq $6, %r8", "6 fractional digits")
+	write(w, ".Lpf_frac:")
+	write(w, "  xorq %rdx, %rdx")
+	write(w, "  divq %rdi")
+	write(w, "  addb $48, %dl")
+	write(w, "  movb %dl, (%r9)")
+	write(w, "  decq %r9")
+	write(w, "  decq %r8")
+	write(w, "  jnz .Lpf_frac")
+	write(w, "  movb $46, (%r9)", "'.'")
+	write(w, "  decq %r9")
+	write(w, "  movq %r10, %rax")
+	write(w, "  testq %rax, %rax")
+	write(w, "  jnz .Lpf_int")
+	write(w, "  movb $48, (%r9)", "Lone '0' for integer 0")
+	write(w, "  decq %r9")
+	write(w, "  jmp .Lpf_int_done")
+	write(w, ".Lpf_int:")
+	write(w, "  xorq %rdx, %rdx")
+	write(w, "  divq %rdi")
+	write(w, "  addb $48, %dl")
+	write(w, "  movb %dl, (%r9)")
+	write(w, "  decq %r9")
+	write(w, "  testq %rax, %rax")
+	write(w, "  jnz .Lpf_int")
+	write(w, ".Lpf_int_done:")
+	write(w, "  testl %r11d, %r11d")
+	write(w, "  jz .Lpf_no_sign")
+	write(w, "  movb $45, (%r9)", "'-'")
+	write(w, "  decq %r9")
+	write(w, ".Lpf_no_sign:")
+	write(w, "  incq %r9", "First char")
+	if runtime.GOOS == "windows" {
+		write(w, "  movq %r9, %rcx")
+		write(w, "  leaq buffer+32(%rip), %rdx")
+		write(w, "  subq %r9, %rdx")
+		write(w, "  call __print_str")
+		write(w, "  addq $56, %rsp")
+	} else {
+		write(w, "  movq %r9, %rdi")
+		write(w, "  leaq buffer+32(%rip), %rsi")
+		write(w, "  subq %r9, %rsi")
+		write(w, "  call __print_str")
+		write(w, "  addq $8, %rsp")
+	}
+	write(w, "  ret")
+	write(w, "")
+}
+
 func (c *Compiler) emitPrintlnStr(w io.Writer) {
 	if !c.usesPrintStr {
 		return
@@ -979,7 +1073,7 @@ func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
 }
 
 func (c *Compiler) emitData(w io.Writer) {
-	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg && !c.usesPanic && !c.usesStrToFloat {
+	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg && !c.usesPanic && !c.usesStrToFloat && !c.usesPrintFloat {
 		return
 	}
 	write(w, ".data")
@@ -1011,5 +1105,12 @@ func (c *Compiler) emitData(w io.Writer) {
 		write(w, ".double 10.0")
 		write(w, ".Latof_neg_one:")
 		write(w, ".double -1.0")
+	}
+	if c.usesPrintFloat {
+		write(w, ".align 8")
+		write(w, ".Lpf_neg_one:")
+		write(w, ".double -1.0")
+		write(w, ".Lpf_million:")
+		write(w, ".double 1000000.0")
 	}
 }
