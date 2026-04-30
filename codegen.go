@@ -161,7 +161,7 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 			write(w, "  testq %rcx, %rcx", "Divisor == 0?")
 			write(w, "  jz __div_zero", "Panic on zero")
 			write(w, "  movq %rbx, %rax", "Move dividend to RAX")
-			write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
+			write(w, "  cqto", "Sign-extend RAX into RDX")
 			write(w, "  idivq %rcx", "Divide RDX:RAX by divisor")
 		case TOK_MOD:
 			c.usesPanic = true
