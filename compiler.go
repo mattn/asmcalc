@@ -5,7 +5,6 @@ import (
 	"io"
 	"runtime"
 	"strconv"
-	"strings"
 )
 
 type Compiler struct {
@@ -165,10 +164,9 @@ func (c *Compiler) evalExpr(e Expr) Value {
 			if v.Tag != TagStr {
 				panic("float() expects a string")
 			}
-			s := strings.TrimLeft(v.S, " \t")
-			f, err := strconv.ParseFloat(s, 64)
-			if err != nil {
-				panic(fmt.Sprintf("float(%q): %v", v.S, err))
+			f, ok := atofMame(v.S)
+			if !ok {
+				panic(fmt.Sprintf("float(%q): invalid syntax", v.S))
 			}
 			return floatVal(f)
 		case "str":
@@ -255,6 +253,49 @@ func (c *Compiler) evalExpr(e Expr) Value {
 		}
 	}
 	panic("unknown expr")
+}
+
+// atofMame mirrors __str_to_float (draft/atof.s) so eval and compile reject
+// the same inputs.
+func atofMame(s string) (float64, bool) {
+	i := 0
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	neg := false
+	if i < len(s) {
+		switch s[i] {
+		case '-':
+			neg = true
+			i++
+		case '+':
+			i++
+		}
+	}
+	var result float64
+	digit := false
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		result = result*10 + float64(s[i]-'0')
+		digit = true
+		i++
+	}
+	if i < len(s) && s[i] == '.' {
+		i++
+		scale := 1.0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			scale /= 10
+			result += float64(s[i]-'0') * scale
+			digit = true
+			i++
+		}
+	}
+	if !digit || i != len(s) {
+		return 0, false
+	}
+	if neg {
+		result = -result
+	}
+	return result, true
 }
 
 func (c *Compiler) Compile(w io.Writer) error {

@@ -225,6 +225,7 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		if len(e.Args) != 1 {
 			panic(fmt.Sprintf("float takes 1 arg, got %d", len(e.Args)))
 		}
+		c.usesPanic = true
 		c.emitExpr(w, e.Args[0])
 		write(w, "  popq %rax", "Pop heap obj ptr")
 		write(w, "  addq $8, %rsp", "Discard tag")
@@ -467,7 +468,8 @@ func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
 // __str_to_float(rdi=ptr, rsi=len) -> xmm0=double. Adapted from draft/atof.s
 // to consume a length-bounded buffer (no null terminator). Handles optional
 // leading spaces/tabs, an optional sign, an integer part, and an optional
-// fractional part. No exponent support (matches the draft).
+// fractional part. No exponent support (matches the draft). Panics via
+// __atof_invalid when no digit is consumed or trailing bytes remain.
 func (c *Compiler) emitStrToFloat(w io.Writer) {
 	if !c.usesStrToFloat {
 		return
@@ -477,6 +479,7 @@ func (c *Compiler) emitStrToFloat(w io.Writer) {
 	write(w, "  movsd .Latof_one(%rip), %xmm2", "scale = 1.0")
 	write(w, "  movsd .Latof_ten(%rip), %xmm3", "10.0")
 	write(w, "  xorl %ecx, %ecx", "negative = 0")
+	write(w, "  xorl %r8d, %r8d", "digit_consumed = 0")
 	write(w, ".Latof_space:")
 	write(w, "  testq %rsi, %rsi", "len == 0?")
 	write(w, "  jz .Latof_finish", "Done")
@@ -510,6 +513,7 @@ func (c *Compiler) emitStrToFloat(w io.Writer) {
 	write(w, "  jb .Latof_dot", "Not a digit")
 	write(w, "  cmpb $0x39, %al", "'9'")
 	write(w, "  ja .Latof_dot", "Not a digit")
+	write(w, "  movl $1, %r8d", "digit_consumed = 1")
 	write(w, "  mulsd %xmm3, %xmm0", "result *= 10")
 	write(w, "  subb $0x30, %al", "digit value")
 	write(w, "  cvtsi2sd %rax, %xmm1", "digit -> double")
@@ -530,6 +534,7 @@ func (c *Compiler) emitStrToFloat(w io.Writer) {
 	write(w, "  jb .Latof_finish", "Not a digit -> finish")
 	write(w, "  cmpb $0x39, %al", "'9'")
 	write(w, "  ja .Latof_finish", "Not a digit -> finish")
+	write(w, "  movl $1, %r8d", "digit_consumed = 1")
 	write(w, "  divsd %xmm3, %xmm2", "scale /= 10")
 	write(w, "  subb $0x30, %al", "digit value")
 	write(w, "  cvtsi2sd %rax, %xmm1", "digit -> double")
@@ -539,12 +544,29 @@ func (c *Compiler) emitStrToFloat(w io.Writer) {
 	write(w, "  decq %rsi", "len--")
 	write(w, "  jmp .Latof_frac", "Continue")
 	write(w, ".Latof_finish:")
+	write(w, "  testl %r8d, %r8d", "any digit consumed?")
+	write(w, "  jz __atof_invalid", "No digit -> panic")
+	write(w, "  testq %rsi, %rsi", "trailing bytes left?")
+	write(w, "  jnz __atof_invalid", "Garbage -> panic")
 	write(w, "  testl %ecx, %ecx", "negative?")
 	write(w, "  jz .Latof_ret", "Skip negation")
 	write(w, "  movsd .Latof_neg_one(%rip), %xmm1", "-1.0")
 	write(w, "  mulsd %xmm1, %xmm0", "Apply sign")
 	write(w, ".Latof_ret:")
 	write(w, "  ret", "Return")
+	write(w, "")
+	if runtime.GOOS == "windows" {
+		write(w, "__atof_invalid:")
+		write(w, "  leaq .Lerr_float(%rip), %rcx", "Buffer")
+		write(w, "  movq $20, %rdx", "Length")
+		write(w, "  jmp __panic", "Tail-call panic")
+		write(w, "")
+		return
+	}
+	write(w, "__atof_invalid:")
+	write(w, "  leaq .Lerr_float(%rip), %rdi", "Buffer")
+	write(w, "  movq $20, %rsi", "Length")
+	write(w, "  jmp __panic", "Tail-call panic")
 	write(w, "")
 }
 
@@ -980,6 +1002,8 @@ func (c *Compiler) emitData(w io.Writer) {
 		write(w, `.ascii "division by zero"`)
 	}
 	if c.usesStrToFloat {
+		write(w, ".Lerr_float:")
+		write(w, `.ascii "invalid float syntax"`)
 		write(w, ".align 8")
 		write(w, ".Latof_one:")
 		write(w, ".double 1.0")

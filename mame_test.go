@@ -407,6 +407,11 @@ func TestEvalPanic(t *testing.T) {
 		{`if 1==1 { panic("nope") } else { 0 }`, "nope"},
 		{"break", "break outside of loop"},
 		{"if 1==1 { break }", "break outside of loop"},
+		{`float("")`, "invalid syntax"},
+		{`float("abc")`, "invalid syntax"},
+		{`float("3abc")`, "invalid syntax"},
+		{`float(".")`, "invalid syntax"},
+		{`float("   ")`, "invalid syntax"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -436,6 +441,10 @@ func TestCompilePanic(t *testing.T) {
 		{"x=0; println(5/x)", "division by zero"},
 		{`panic("boom")`, "boom"},
 		{`if 1==1 { panic("kaboom") } else { println(0) }`, "kaboom"},
+		{`x = float(""); println(0)`, "invalid float syntax"},
+		{`x = float("abc"); println(0)`, "invalid float syntax"},
+		{`x = float("3abc"); println(0)`, "invalid float syntax"},
+		{`x = float("."); println(0)`, "invalid float syntax"},
 	}
 	tmpDir := t.TempDir()
 	for _, tt := range tests {
