@@ -352,3 +352,100 @@ func TestCompileString(t *testing.T) {
 		})
 	}
 }
+
+func TestEvalPanic(t *testing.T) {
+	tests := []struct {
+		expr string
+		want string
+	}{
+		{"1/0", "division by zero"},
+		{"1%0", "division by zero"},
+		{"x=0; 5/x", "division by zero"},
+		{"x=0; 5%x", "division by zero"},
+		{`panic("boom")`, "boom"},
+		{`if 1==1 { panic("nope") } else { 0 }`, "nope"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("Eval(%q) did not panic", tt.expr)
+				}
+				if msg, ok := r.(string); !ok || !strings.Contains(msg, tt.want) {
+					t.Errorf("Eval(%q) panic = %v, want %q", tt.expr, r, tt.want)
+				}
+			}()
+			c := NewCompiler(tt.expr)
+			c.Lex()
+			c.Eval()
+		})
+	}
+}
+
+func TestCompilePanic(t *testing.T) {
+	tests := []struct {
+		expr string
+		want string
+	}{
+		{"println(1/0)", "division by zero"},
+		{"println(1%0)", "division by zero"},
+		{"x=0; println(5/x)", "division by zero"},
+		{`panic("boom")`, "boom"},
+		{`if 1==1 { panic("kaboom") } else { println(0) }`, "kaboom"},
+	}
+	tmpDir := t.TempDir()
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			expr := tt.expr
+			compiler := NewCompiler(expr)
+			compiler.Lex()
+			var buf bytes.Buffer
+			if err := compiler.Compile(&buf); err != nil {
+				t.Fatalf("Compile failed: %v", err)
+			}
+			asmFile := filepath.Join(tmpDir, "test.s")
+			objFile := filepath.Join(tmpDir, "test.o")
+			exeFile := filepath.Join(tmpDir, "test")
+			if runtime.GOOS == "windows" {
+				exeFile += ".exe"
+			}
+			defer func() {
+				os.Remove(asmFile)
+				os.Remove(objFile)
+				os.Remove(exeFile)
+			}()
+			if err := os.WriteFile(asmFile, buf.Bytes(), 0644); err != nil {
+				t.Fatalf("WriteFile failed: %v", err)
+			}
+			asCmd := exec.Command("as", "-64", asmFile, "-o", objFile)
+			if out, err := asCmd.CombinedOutput(); err != nil {
+				t.Fatalf("as failed: %v\n%s", err, out)
+			}
+			var ldCmd *exec.Cmd
+			if runtime.GOOS == "windows" {
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32")
+			} else {
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile)
+			}
+			if out, err := ldCmd.CombinedOutput(); err != nil {
+				t.Fatalf("ld failed: %v\n%s", err, out)
+			}
+			runCmd := exec.Command(exeFile)
+			var stdout, stderr bytes.Buffer
+			runCmd.Stdout = &stdout
+			runCmd.Stderr = &stderr
+			err := runCmd.Run()
+			exitErr, ok := err.(*exec.ExitError)
+			if !ok {
+				t.Fatalf("expected non-zero exit, got err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+			}
+			if exitErr.ExitCode() != 1 {
+				t.Errorf("exit code = %d, want 1", exitErr.ExitCode())
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.want)
+			}
+		})
+	}
+}

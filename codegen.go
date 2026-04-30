@@ -156,12 +156,18 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		case TOK_MUL:
 			write(w, "  imulq %rbx, %rax", "Multiply")
 		case TOK_DIV:
+			c.usesPanic = true
 			write(w, "  movq %rax, %rcx", "Save divisor")
+			write(w, "  testq %rcx, %rcx", "Divisor == 0?")
+			write(w, "  jz __div_zero", "Panic on zero")
 			write(w, "  movq %rbx, %rax", "Move dividend to RAX")
 			write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
 			write(w, "  idivq %rcx", "Divide RDX:RAX by divisor")
 		case TOK_MOD:
+			c.usesPanic = true
 			write(w, "  movq %rax, %rcx", "Save divisor")
+			write(w, "  testq %rcx, %rcx", "Divisor == 0?")
+			write(w, "  jz __div_zero", "Panic on zero")
 			write(w, "  movq %rbx, %rax", "Move dividend to RAX")
 			write(w, "  cqto", "Sign-extend RAX into RDX")
 			write(w, "  idivq %rcx", "RDX = remainder")
@@ -228,6 +234,25 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		write(w, "  movq 8(%rax), %rax", "len from header")
 		write(w, "  pushq $0", "Tag = INT")
 		write(w, "  pushq %rax", "Push len")
+		return
+	case "panic":
+		if len(e.Args) != 1 {
+			panic(fmt.Sprintf("panic takes 1 arg, got %d", len(e.Args)))
+		}
+		c.usesPanic = true
+		c.emitExpr(w, e.Args[0])
+		write(w, "  popq %rax", "Pop heap obj ptr")
+		write(w, "  addq $8, %rsp", "Discard tag")
+		if runtime.GOOS == "windows" {
+			write(w, "  movq 8(%rax), %rdx", "len -> arg2")
+			write(w, "  leaq 16(%rax), %rcx", "bytes -> arg1")
+		} else {
+			write(w, "  movq 8(%rax), %rsi", "len -> arg2")
+			write(w, "  leaq 16(%rax), %rdi", "bytes -> arg1")
+		}
+		write(w, "  call __panic", "Panic (no return)")
+		write(w, "  pushq $0", "Tag = INT (unreachable)")
+		write(w, "  pushq $0", "Dummy result")
 		return
 	case "print", "println":
 		if len(e.Args) != 1 {
@@ -334,6 +359,7 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	c.emitStrToInt(w)
 	c.emitArgGet(w)
 	c.emitArgOob(w)
+	c.emitPanic(w)
 	c.emitAlloc(w)
 	c.emitIntToStr(w)
 	c.emitPrintln(w)
@@ -367,6 +393,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	c.emitStrToInt(w)
 	c.emitArgGet(w)
 	c.emitArgOob(w)
+	c.emitPanic(w)
 	c.emitAlloc(w)
 	c.emitIntToStr(w)
 	c.emitPrintln(w)
@@ -377,7 +404,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 		write(w, "buffer:")
 		write(w, ".space 32", "32-byte buffer for number")
 	}
-	if c.usesPrint || c.usesPrintStr || c.usesArg {
+	if c.usesPrint || c.usesPrintStr || c.usesArg || c.usesPanic {
 		write(w, "written:")
 		write(w, ".space 8", "Bytes written")
 	}
@@ -642,6 +669,53 @@ func (c *Compiler) emitArgOob(w io.Writer) {
 	write(w, "")
 }
 
+// __panic(bytes_ptr, len) writes the message to stderr and exits 1. Never
+// returns. Linux args: rdi=ptr, rsi=len. Windows args: rcx=ptr, rdx=len.
+// __div_zero is a small trampoline used by div/mod runtime checks.
+func (c *Compiler) emitPanic(w io.Writer) {
+	if !c.usesPanic {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		write(w, "__panic:")
+		write(w, "  subq $56, %rsp", "Shadow + 5th arg + spill")
+		write(w, "  movq %rcx, 40(%rsp)", "Spill bytes ptr")
+		write(w, "  movq %rdx, 48(%rsp)", "Spill len")
+		write(w, "  movq $-12, %rcx", "STD_ERROR_HANDLE")
+		write(w, "  call GetStdHandle", "RAX = stderr")
+		write(w, "  movq %rax, %rcx", "Handle")
+		write(w, "  movq 40(%rsp), %rdx", "Buffer ptr")
+		write(w, "  movq 48(%rsp), %r8", "Length")
+		write(w, "  leaq written(%rip), %r9", "Bytes written")
+		write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
+		write(w, "  call WriteFile", "Write to stderr")
+		write(w, "  movq $1, %rcx", "Exit code 1")
+		write(w, "  call ExitProcess", "Exit (no return)")
+		write(w, "")
+		write(w, "__div_zero:")
+		write(w, "  leaq .Lerr_div(%rip), %rcx", "Buffer")
+		write(w, "  movq $17, %rdx", "Length")
+		write(w, "  jmp __panic", "Tail-call panic")
+		write(w, "")
+		return
+	}
+	write(w, "__panic:")
+	write(w, "  movq %rsi, %rdx", "Length to RDX (syscall arg 3)")
+	write(w, "  movq %rdi, %rsi", "Buffer to RSI (syscall arg 2)")
+	write(w, "  movq $2, %rdi", "stderr")
+	write(w, "  movq $1, %rax", "Syscall: write")
+	write(w, "  syscall", "Call kernel")
+	write(w, "  movq $60, %rax", "Syscall: exit")
+	write(w, "  movq $1, %rdi", "Status 1")
+	write(w, "  syscall", "Call kernel (no return)")
+	write(w, "")
+	write(w, "__div_zero:")
+	write(w, "  leaq .Lerr_div(%rip), %rdi", "Buffer")
+	write(w, "  movq $17, %rsi", "Length")
+	write(w, "  jmp __panic", "Tail-call panic")
+	write(w, "")
+}
+
 func (c *Compiler) emitPrintln(w io.Writer) {
 	if !c.usesPrint {
 		return
@@ -763,7 +837,7 @@ func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
 }
 
 func (c *Compiler) emitData(w io.Writer) {
-	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg {
+	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg && !c.usesPanic {
 		return
 	}
 	write(w, ".data")
@@ -780,5 +854,9 @@ func (c *Compiler) emitData(w io.Writer) {
 	if c.usesArg {
 		write(w, ".Lerr_oob:")
 		write(w, `.ascii "arg out of range\n"`)
+	}
+	if c.usesPanic {
+		write(w, ".Lerr_div:")
+		write(w, `.ascii "division by zero\n"`)
 	}
 }

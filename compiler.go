@@ -21,6 +21,7 @@ type Compiler struct {
 	usesPrintStr bool
 	usesStrToInt bool
 	usesIntToStr bool
+	usesPanic    bool
 	strLits      []string
 	labelCnt     int
 }
@@ -150,6 +151,15 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				panic("len() expects a string")
 			}
 			return intVal(len(v.S))
+		case "panic":
+			if len(e.Args) != 1 {
+				panic(fmt.Sprintf("panic takes 1 arg, got %d", len(e.Args)))
+			}
+			v := c.evalExpr(e.Args[0])
+			if v.Tag != TagStr {
+				panic("panic() expects a string")
+			}
+			panic(v.S)
 		}
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	case *StrLit:
@@ -165,8 +175,14 @@ func (c *Compiler) evalExpr(e Expr) Value {
 		case TOK_MUL:
 			return intVal(l * r)
 		case TOK_DIV:
+			if r == 0 {
+				panic("division by zero")
+			}
 			return intVal(l / r)
 		case TOK_MOD:
+			if r == 0 {
+				panic("division by zero")
+			}
 			return intVal(l % r)
 		case TOK_EQ:
 			if l == r {
