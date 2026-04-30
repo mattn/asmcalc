@@ -683,18 +683,25 @@ func (c *Compiler) emitPanic(w io.Writer) {
 		write(w, "  movq %rdx, 48(%rsp)", "Spill len")
 		write(w, "  movq $-12, %rcx", "STD_ERROR_HANDLE")
 		write(w, "  call GetStdHandle", "RAX = stderr")
-		write(w, "  movq %rax, %rcx", "Handle")
+		write(w, "  movq %rax, %r12", "Save handle (callee-saved)")
+		write(w, "  movq %r12, %rcx", "Handle")
 		write(w, "  movq 40(%rsp), %rdx", "Buffer ptr")
 		write(w, "  movq 48(%rsp), %r8", "Length")
 		write(w, "  leaq written(%rip), %r9", "Bytes written")
 		write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
-		write(w, "  call WriteFile", "Write to stderr")
+		write(w, "  call WriteFile", "Write message")
+		write(w, "  movq %r12, %rcx", "Handle")
+		write(w, "  leaq .Lnl(%rip), %rdx", "Newline ptr")
+		write(w, "  movq $1, %r8", "Length 1")
+		write(w, "  leaq written(%rip), %r9", "Bytes written")
+		write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
+		write(w, "  call WriteFile", "Write trailing newline")
 		write(w, "  movq $1, %rcx", "Exit code 1")
 		write(w, "  call ExitProcess", "Exit (no return)")
 		write(w, "")
 		write(w, "__div_zero:")
 		write(w, "  leaq .Lerr_div(%rip), %rcx", "Buffer")
-		write(w, "  movq $17, %rdx", "Length")
+		write(w, "  movq $16, %rdx", "Length")
 		write(w, "  jmp __panic", "Tail-call panic")
 		write(w, "")
 		return
@@ -705,13 +712,18 @@ func (c *Compiler) emitPanic(w io.Writer) {
 	write(w, "  movq $2, %rdi", "stderr")
 	write(w, "  movq $1, %rax", "Syscall: write")
 	write(w, "  syscall", "Call kernel")
+	write(w, "  movq $1, %rax", "Syscall: write")
+	write(w, "  movq $2, %rdi", "stderr")
+	write(w, "  leaq .Lnl(%rip), %rsi", "Newline ptr")
+	write(w, "  movq $1, %rdx", "Length 1")
+	write(w, "  syscall", "Write trailing newline")
 	write(w, "  movq $60, %rax", "Syscall: exit")
 	write(w, "  movq $1, %rdi", "Status 1")
 	write(w, "  syscall", "Call kernel (no return)")
 	write(w, "")
 	write(w, "__div_zero:")
 	write(w, "  leaq .Lerr_div(%rip), %rdi", "Buffer")
-	write(w, "  movq $17, %rsi", "Length")
+	write(w, "  movq $16, %rsi", "Length")
 	write(w, "  jmp __panic", "Tail-call panic")
 	write(w, "")
 }
@@ -847,7 +859,7 @@ func (c *Compiler) emitData(w io.Writer) {
 		write(w, fmt.Sprintf(".quad %d", len(s)), "len")
 		write(w, fmt.Sprintf(".ascii %q", s))
 	}
-	if c.usesPrintStr {
+	if c.usesPrintStr || c.usesPanic {
 		write(w, ".Lnl:")
 		write(w, `.ascii "\n"`)
 	}
@@ -857,6 +869,6 @@ func (c *Compiler) emitData(w io.Writer) {
 	}
 	if c.usesPanic {
 		write(w, ".Lerr_div:")
-		write(w, `.ascii "division by zero\n"`)
+		write(w, `.ascii "division by zero"`)
 	}
 }
