@@ -11,6 +11,12 @@ import (
 	"github.com/mattn/mame"
 )
 
+const name = "mame"
+
+const version = "0.0.0"
+
+var revision = "HEAD"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -28,6 +34,8 @@ func main() {
 		cmdEval(args)
 	case "compile":
 		cmdCompile(args)
+	case "version":
+		cmdVersion()
 	default:
 		usage()
 		os.Exit(1)
@@ -40,6 +48,11 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  mame compile [-o out] [-e expr] [file]")
 	fmt.Fprintln(os.Stderr, "  mame run     [-e expr] [file] [args...]")
 	fmt.Fprintln(os.Stderr, "  mame eval    [-e expr] [file] [args...]")
+	fmt.Fprintln(os.Stderr, "  mame version")
+}
+
+func cmdVersion() {
+	fmt.Printf("%s %s (rev: %s)\n", name, version, revision)
 }
 
 func loadCompiler(fs *flag.FlagSet, args []string) (*mame.Compiler, []string) {
@@ -107,6 +120,9 @@ func cmdRun(args []string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
