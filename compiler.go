@@ -5,26 +5,31 @@ import (
 	"io"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 type Compiler struct {
-	input        string
-	pos          int
-	tokens       []Token
-	tokenPos     int
-	program      *Program
-	vars         map[string]bool
-	varValues    map[string]Value
-	args         []string
-	usesArg      bool
-	usesPrint    bool
-	usesPrintStr bool
-	usesStrToInt bool
-	usesIntToStr bool
-	usesPanic    bool
-	strLits      []string
-	labelCnt     int
+	input          string
+	pos            int
+	tokens         []Token
+	tokenPos       int
+	program        *Program
+	vars           map[string]bool
+	varValues      map[string]Value
+	args           []string
+	usesArg        bool
+	usesPrint      bool
+	usesPrintStr   bool
+	usesStrToInt   bool
+	usesIntToStr   bool
+	usesStrToFloat bool
+	usesPanic      bool
+	strLits        []string
+	labelCnt       int
+	loopEndLabels  []int
 }
+
+type breakSignal struct{}
 
 func (c *Compiler) usesHeap() bool {
 	return c.usesArg || c.usesIntToStr
@@ -44,6 +49,14 @@ func (c *Compiler) Eval(args ...string) int {
 	c.varValues = map[string]Value{}
 	c.args = args
 	var result Value
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(breakSignal); ok {
+				panic("break outside of loop")
+			}
+			panic(r)
+		}
+	}()
 	for _, stmt := range c.program.Stmts {
 		result = c.evalStmt(stmt)
 	}
@@ -72,12 +85,23 @@ func (c *Compiler) evalStmt(s Stmt) Value {
 		return result
 	case *WhileStmt:
 		var result Value
-		for c.evalExpr(s.Cond).I != 0 {
-			for _, t := range s.Body {
-				result = c.evalStmt(t)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if _, ok := r.(breakSignal); !ok {
+						panic(r)
+					}
+				}
+			}()
+			for c.evalExpr(s.Cond).I != 0 {
+				for _, t := range s.Body {
+					result = c.evalStmt(t)
+				}
 			}
-		}
+		}()
 		return result
+	case *BreakStmt:
+		panic(breakSignal{})
 	}
 	panic("unknown stmt")
 }
@@ -133,6 +157,20 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				panic(fmt.Sprintf("int(%q): %v", v.S, err))
 			}
 			return intVal(n)
+		case "float":
+			if len(e.Args) != 1 {
+				panic(fmt.Sprintf("float takes 1 arg, got %d", len(e.Args)))
+			}
+			v := c.evalExpr(e.Args[0])
+			if v.Tag != TagStr {
+				panic("float() expects a string")
+			}
+			s := strings.TrimLeft(v.S, " \t")
+			f, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				panic(fmt.Sprintf("float(%q): %v", v.S, err))
+			}
+			return floatVal(f)
 		case "str":
 			if len(e.Args) != 1 {
 				panic(fmt.Sprintf("str takes 1 arg, got %d", len(e.Args)))

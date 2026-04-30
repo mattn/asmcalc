@@ -25,8 +25,8 @@ func write(w io.Writer, code string, comment ...string) {
 }
 
 // Slot layout (16 bytes, every value uniform):
-//   +0  tag       (0 = INT, 1 = STR)
-//   +8  payload   (INT: the value; STR: ptr to heap object)
+//   +0  tag       (0 = INT, 1 = STR, 2 = FLOAT)
+//   +8  payload   (INT: the value; STR: ptr to heap object; FLOAT: double bits)
 //
 // Heap object (for both static literals and dynamic strings):
 //   +0  refcount  (placeholder, always 0 for now; reserved for future RC/GC)
@@ -58,6 +58,12 @@ func (c *Compiler) emitStmt(w io.Writer, s Stmt) {
 		c.emitIf(w, s)
 	case *WhileStmt:
 		c.emitWhile(w, s)
+	case *BreakStmt:
+		if len(c.loopEndLabels) == 0 {
+			panic("break outside of loop")
+		}
+		id := c.loopEndLabels[len(c.loopEndLabels)-1]
+		write(w, fmt.Sprintf("  jmp .Lwhile_end_%d", id), "break")
 	}
 }
 
@@ -70,9 +76,11 @@ func (c *Compiler) emitWhile(w io.Writer, s *WhileStmt) {
 	write(w, "  addq $8, %rsp", "Discard tag")
 	write(w, "  testq %rax, %rax", "Test condition")
 	write(w, fmt.Sprintf("  jz .Lwhile_end_%d", id), "False -> exit loop")
+	c.loopEndLabels = append(c.loopEndLabels, id)
 	for _, t := range s.Body {
 		c.emitStmt(w, t)
 	}
+	c.loopEndLabels = c.loopEndLabels[:len(c.loopEndLabels)-1]
 	write(w, fmt.Sprintf("  jmp .Lwhile_top_%d", id), "Loop back")
 	write(w, fmt.Sprintf(".Lwhile_end_%d:", id))
 }
@@ -212,6 +220,20 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		write(w, "  call __str_to_int", "Parse as integer")
 		write(w, "  pushq $0", "Tag = INT")
 		write(w, "  pushq %rax", "Push value")
+		return
+	case "float":
+		if len(e.Args) != 1 {
+			panic(fmt.Sprintf("float takes 1 arg, got %d", len(e.Args)))
+		}
+		c.emitExpr(w, e.Args[0])
+		write(w, "  popq %rax", "Pop heap obj ptr")
+		write(w, "  addq $8, %rsp", "Discard tag")
+		write(w, "  movq 8(%rax), %rsi", "len from header")
+		write(w, "  leaq 16(%rax), %rdi", "bytes ptr from header")
+		write(w, "  call __str_to_float", "Parse as double (xmm0 = result)")
+		write(w, "  pushq $2", "Tag = FLOAT")
+		write(w, "  subq $8, %rsp", "Reserve payload slot")
+		write(w, "  movsd %xmm0, (%rsp)", "Store double bits as payload")
 		return
 	case "str":
 		if len(e.Args) != 1 {
@@ -357,6 +379,7 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, "  syscall", "Call kernel")
 	write(w, "")
 	c.emitStrToInt(w)
+	c.emitStrToFloat(w)
 	c.emitArgGet(w)
 	c.emitArgOob(w)
 	c.emitPanic(w)
@@ -391,6 +414,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, "  call ExitProcess", "Exit")
 	write(w, "")
 	c.emitStrToInt(w)
+	c.emitStrToFloat(w)
 	c.emitArgGet(w)
 	c.emitArgOob(w)
 	c.emitPanic(w)
@@ -438,6 +462,90 @@ func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
 	write(w, "  leaq argc_storage(%rip), %rdx", "arg2: pNumArgs")
 	write(w, "  call CommandLineToArgvW", "RAX = LPWSTR*")
 	write(w, "  movq %rax, argv_ptr(%rip)", "Save argv pointer")
+}
+
+// __str_to_float(rdi=ptr, rsi=len) -> xmm0=double. Adapted from draft/atof.s
+// to consume a length-bounded buffer (no null terminator). Handles optional
+// leading spaces/tabs, an optional sign, an integer part, and an optional
+// fractional part. No exponent support (matches the draft).
+func (c *Compiler) emitStrToFloat(w io.Writer) {
+	if !c.usesStrToFloat {
+		return
+	}
+	write(w, "__str_to_float:")
+	write(w, "  pxor %xmm0, %xmm0", "result = 0.0")
+	write(w, "  movsd .Latof_one(%rip), %xmm2", "scale = 1.0")
+	write(w, "  movsd .Latof_ten(%rip), %xmm3", "10.0")
+	write(w, "  xorl %ecx, %ecx", "negative = 0")
+	write(w, ".Latof_space:")
+	write(w, "  testq %rsi, %rsi", "len == 0?")
+	write(w, "  jz .Latof_finish", "Done")
+	write(w, "  movzbq (%rdi), %rax", "Load byte")
+	write(w, "  cmpb $0x20, %al", "' '")
+	write(w, "  je .Latof_skip_ws", "Skip space")
+	write(w, "  cmpb $0x09, %al", "'\\t'")
+	write(w, "  je .Latof_skip_ws", "Skip tab")
+	write(w, "  jmp .Latof_sign", "Done with whitespace")
+	write(w, ".Latof_skip_ws:")
+	write(w, "  incq %rdi", "Advance")
+	write(w, "  decq %rsi", "len--")
+	write(w, "  jmp .Latof_space", "Continue")
+	write(w, ".Latof_sign:")
+	write(w, "  cmpb $0x2D, (%rdi)", "'-'?")
+	write(w, "  jne .Latof_plus", "Not '-'")
+	write(w, "  movl $1, %ecx", "negative = 1")
+	write(w, "  incq %rdi", "Skip '-'")
+	write(w, "  decq %rsi", "len--")
+	write(w, "  jmp .Latof_int", "Parse integer part")
+	write(w, ".Latof_plus:")
+	write(w, "  cmpb $0x2B, (%rdi)", "'+'?")
+	write(w, "  jne .Latof_int", "Not '+'")
+	write(w, "  incq %rdi", "Skip '+'")
+	write(w, "  decq %rsi", "len--")
+	write(w, ".Latof_int:")
+	write(w, "  testq %rsi, %rsi", "len == 0?")
+	write(w, "  jz .Latof_finish", "Done")
+	write(w, "  movzbq (%rdi), %rax", "Load byte")
+	write(w, "  cmpb $0x30, %al", "'0'")
+	write(w, "  jb .Latof_dot", "Not a digit")
+	write(w, "  cmpb $0x39, %al", "'9'")
+	write(w, "  ja .Latof_dot", "Not a digit")
+	write(w, "  mulsd %xmm3, %xmm0", "result *= 10")
+	write(w, "  subb $0x30, %al", "digit value")
+	write(w, "  cvtsi2sd %rax, %xmm1", "digit -> double")
+	write(w, "  addsd %xmm1, %xmm0", "result += digit")
+	write(w, "  incq %rdi", "Advance")
+	write(w, "  decq %rsi", "len--")
+	write(w, "  jmp .Latof_int", "Continue")
+	write(w, ".Latof_dot:")
+	write(w, "  cmpb $0x2E, (%rdi)", "'.'?")
+	write(w, "  jne .Latof_finish", "No fractional part")
+	write(w, "  incq %rdi", "Skip '.'")
+	write(w, "  decq %rsi", "len--")
+	write(w, ".Latof_frac:")
+	write(w, "  testq %rsi, %rsi", "len == 0?")
+	write(w, "  jz .Latof_finish", "Done")
+	write(w, "  movzbq (%rdi), %rax", "Load byte")
+	write(w, "  cmpb $0x30, %al", "'0'")
+	write(w, "  jb .Latof_finish", "Not a digit -> finish")
+	write(w, "  cmpb $0x39, %al", "'9'")
+	write(w, "  ja .Latof_finish", "Not a digit -> finish")
+	write(w, "  divsd %xmm3, %xmm2", "scale /= 10")
+	write(w, "  subb $0x30, %al", "digit value")
+	write(w, "  cvtsi2sd %rax, %xmm1", "digit -> double")
+	write(w, "  mulsd %xmm2, %xmm1", "digit *= scale")
+	write(w, "  addsd %xmm1, %xmm0", "result += digit*scale")
+	write(w, "  incq %rdi", "Advance")
+	write(w, "  decq %rsi", "len--")
+	write(w, "  jmp .Latof_frac", "Continue")
+	write(w, ".Latof_finish:")
+	write(w, "  testl %ecx, %ecx", "negative?")
+	write(w, "  jz .Latof_ret", "Skip negation")
+	write(w, "  movsd .Latof_neg_one(%rip), %xmm1", "-1.0")
+	write(w, "  mulsd %xmm1, %xmm0", "Apply sign")
+	write(w, ".Latof_ret:")
+	write(w, "  ret", "Return")
+	write(w, "")
 }
 
 func (c *Compiler) emitStrToInt(w io.Writer) {
@@ -849,7 +957,7 @@ func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
 }
 
 func (c *Compiler) emitData(w io.Writer) {
-	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg && !c.usesPanic {
+	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg && !c.usesPanic && !c.usesStrToFloat {
 		return
 	}
 	write(w, ".data")
@@ -870,5 +978,14 @@ func (c *Compiler) emitData(w io.Writer) {
 	if c.usesPanic {
 		write(w, ".Lerr_div:")
 		write(w, `.ascii "division by zero"`)
+	}
+	if c.usesStrToFloat {
+		write(w, ".align 8")
+		write(w, ".Latof_one:")
+		write(w, ".double 1.0")
+		write(w, ".Latof_ten:")
+		write(w, ".double 10.0")
+		write(w, ".Latof_neg_one:")
+		write(w, ".double -1.0")
 	}
 }

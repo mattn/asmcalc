@@ -39,11 +39,13 @@ type WhileStmt struct {
 	Cond Expr
 	Body []Stmt
 }
+type BreakStmt struct{}
 
 func (*AssignStmt) stmtNode() {}
 func (*ExprStmt) stmtNode()   {}
 func (*IfStmt) stmtNode()     {}
 func (*WhileStmt) stmtNode()  {}
+func (*BreakStmt) stmtNode()  {}
 
 type Program struct{ Stmts []Stmt }
 
@@ -51,6 +53,7 @@ func (c *Compiler) Parse() *Program {
 	c.tokenPos = 0
 	c.usesArg = false
 	c.usesStrToInt = false
+	c.usesStrToFloat = false
 	c.usesPrint = false
 	c.usesPrintStr = false
 	prog := &Program{}
@@ -73,6 +76,10 @@ func (c *Compiler) parseStmt() Stmt {
 	}
 	if c.peek().Type == TOK_IDENT && c.peek().Name == "while" {
 		return c.parseWhile()
+	}
+	if c.peek().Type == TOK_IDENT && c.peek().Name == "break" {
+		c.consume(TOK_IDENT)
+		return &BreakStmt{}
 	}
 	if c.peek().Type == TOK_IDENT && c.tokenPos+1 < len(c.tokens) && c.tokens[c.tokenPos+1].Type == TOK_ASSIGN {
 		name := c.consume(TOK_IDENT).Name
@@ -196,6 +203,12 @@ func (c *Compiler) parseFactor() Expr {
 					panic("int takes 1 argument")
 				}
 				c.usesStrToInt = true
+			}
+			if name == "float" {
+				if len(args) != 1 {
+					panic("float takes 1 argument")
+				}
+				c.usesStrToFloat = true
 			}
 			if name == "str" {
 				if len(args) != 1 {

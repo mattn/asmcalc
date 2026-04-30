@@ -145,6 +145,10 @@ func TestEval(t *testing.T) {
 		{"i=0; while i<3 { i=i+1 }; i", nil, 3},
 		{`x = "Fizz"; 42`, nil, 42},
 		{`x = "Fizz"; y = "Buzz"; 0`, nil, 0},
+		{"i=0; while i<10 { if i==3 { break }; i=i+1 }; i", nil, 3},
+		{"i=0; while 1 { i=i+1; if i==5 { break } }; i", nil, 5},
+		{"i=0; j=0; while i<3 { k=0; while k<10 { if k==2 { break }; k=k+1 }; j=j+k; i=i+1 }; j", nil, 6},
+		{"i=0; while i<5 { i=i+1 }; i", nil, 5},
 	}
 
 	for _, tt := range tests {
@@ -172,6 +176,37 @@ func TestEvalStringStorage(t *testing.T) {
 	}
 	if v.S != "Fizz" {
 		t.Errorf("x.S = %q, want %q", v.S, "Fizz")
+	}
+}
+
+func TestEvalFloatStorage(t *testing.T) {
+	tests := []struct {
+		expr string
+		want float64
+	}{
+		{`x = float("3.14")`, 3.14},
+		{`x = float("-2.5")`, -2.5},
+		{`x = float("+0.5")`, 0.5},
+		{`x = float("0")`, 0},
+		{`x = float("42")`, 42},
+		{`x = float("  -1.25")`, -1.25},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			c := NewCompiler(tt.expr)
+			c.Lex()
+			c.Eval()
+			v, ok := c.varValues["x"]
+			if !ok {
+				t.Fatalf("var x not stored")
+			}
+			if v.Tag != TagFloat {
+				t.Fatalf("x.Tag = %d, want TagFloat (%d)", v.Tag, TagFloat)
+			}
+			if v.F != tt.want {
+				t.Errorf("x.F = %v, want %v", v.F, tt.want)
+			}
+		})
 	}
 }
 
@@ -215,6 +250,12 @@ func TestCompile(t *testing.T) {
 		{"i=15; if i%15==0 { println(15) } else if i%3==0 { println(3) } else { println(0) }", nil, 15},
 		{"i=0; s=0; while i<5 { i=i+1; s=s+i }; println(s)", nil, 15},
 		{"i=0; while i<3 { i=i+1 }; println(i)", nil, 3},
+		{"i=0; while i<10 { if i==3 { break }; i=i+1 }; println(i)", nil, 3},
+		{"i=0; while 1 { i=i+1; if i==5 { break } }; println(i)", nil, 5},
+		{"i=0; j=0; while i<3 { k=0; while k<10 { if k==2 { break }; k=k+1 }; j=j+k; i=i+1 }; println(j)", nil, 6},
+		{`x = float("3.14"); println(42)`, nil, 42},
+		{`x = float("-0.5"); println(7)`, nil, 7},
+		{`x = float(arg(1)); println(99)`, []string{"1.5"}, 99},
 	}
 
 	tmpDir := t.TempDir()
@@ -364,6 +405,8 @@ func TestEvalPanic(t *testing.T) {
 		{"x=0; 5%x", "division by zero"},
 		{`panic("boom")`, "boom"},
 		{`if 1==1 { panic("nope") } else { 0 }`, "nope"},
+		{"break", "break outside of loop"},
+		{"if 1==1 { break }", "break outside of loop"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
