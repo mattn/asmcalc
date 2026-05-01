@@ -54,6 +54,7 @@ func (c *Compiler) Parse() *Program {
 	c.usesArg = false
 	c.usesStrToInt = false
 	c.usesStrToFloat = false
+	c.usesFloatToStr = false
 	c.usesPrint = false
 	c.usesPrintStr = false
 	prog := &Program{}
@@ -215,6 +216,7 @@ func (c *Compiler) parseFactor() Expr {
 					panic("str takes 1 argument")
 				}
 				c.usesIntToStr = true
+				c.usesFloatToStr = true
 			}
 			if name == "print" || name == "println" {
 				if len(args) == 1 {

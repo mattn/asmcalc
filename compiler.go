@@ -23,7 +23,9 @@ type Compiler struct {
 	usesStrToInt   bool
 	usesIntToStr   bool
 	usesStrToFloat bool
+	usesFloatToStr bool
 	usesPanic      bool
+	usesOpTypeErr  bool
 	strLits        []string
 	labelCnt       int
 	loopEndLabels  []int
@@ -32,7 +34,11 @@ type Compiler struct {
 type breakSignal struct{}
 
 func (c *Compiler) usesHeap() bool {
-	return c.usesArg || c.usesIntToStr
+	return c.usesArg || c.usesIntToStr || c.usesFloatToStr
+}
+
+func (c *Compiler) usesFloatRender() bool {
+	return c.usesPrintFloat || c.usesFloatToStr
 }
 
 func NewCompiler(input string) *Compiler {
@@ -155,36 +161,51 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				panic(fmt.Sprintf("int takes 1 arg, got %d", len(e.Args)))
 			}
 			v := c.evalExpr(e.Args[0])
-			if v.Tag != TagStr {
-				panic("int() expects a string")
+			switch v.Tag {
+			case TagInt:
+				return v
+			case TagFloat:
+				return intVal(int(v.F))
+			case TagStr:
+				n, err := strconv.Atoi(v.S)
+				if err != nil {
+					panic(fmt.Sprintf("int(%q): %v", v.S, err))
+				}
+				return intVal(n)
 			}
-			n, err := strconv.Atoi(v.S)
-			if err != nil {
-				panic(fmt.Sprintf("int(%q): %v", v.S, err))
-			}
-			return intVal(n)
+			panic("int(): unknown tag")
 		case "float":
 			if len(e.Args) != 1 {
 				panic(fmt.Sprintf("float takes 1 arg, got %d", len(e.Args)))
 			}
 			v := c.evalExpr(e.Args[0])
-			if v.Tag != TagStr {
-				panic("float() expects a string")
+			switch v.Tag {
+			case TagFloat:
+				return v
+			case TagInt:
+				return floatVal(float64(v.I))
+			case TagStr:
+				f, ok := atofMame(v.S)
+				if !ok {
+					panic(fmt.Sprintf("float(%q): invalid syntax", v.S))
+				}
+				return floatVal(f)
 			}
-			f, ok := atofMame(v.S)
-			if !ok {
-				panic(fmt.Sprintf("float(%q): invalid syntax", v.S))
-			}
-			return floatVal(f)
+			panic("float(): unknown tag")
 		case "str":
 			if len(e.Args) != 1 {
 				panic(fmt.Sprintf("str takes 1 arg, got %d", len(e.Args)))
 			}
 			v := c.evalExpr(e.Args[0])
-			if v.Tag != TagInt {
-				panic("str() expects an int")
+			switch v.Tag {
+			case TagStr:
+				return v
+			case TagInt:
+				return strVal(strconv.Itoa(v.I))
+			case TagFloat:
+				return strVal(fmt.Sprintf("%.6f", v.F))
 			}
-			return strVal(strconv.Itoa(v.I))
+			panic("str(): unknown tag")
 		case "len":
 			if len(e.Args) != 1 {
 				panic(fmt.Sprintf("len takes 1 arg, got %d", len(e.Args)))
@@ -208,58 +229,88 @@ func (c *Compiler) evalExpr(e Expr) Value {
 	case *StrLit:
 		return strVal(e.Value)
 	case *BinOp:
-		l := c.evalExpr(e.L).I
-		r := c.evalExpr(e.R).I
+		l := c.evalExpr(e.L)
+		r := c.evalExpr(e.R)
+		if l.Tag == TagStr || r.Tag == TagStr {
+			panic("invalid operand types")
+		}
+		if e.Op == TOK_MOD {
+			if l.Tag != TagInt || r.Tag != TagInt {
+				panic("invalid operand types")
+			}
+			if r.I == 0 {
+				panic("division by zero")
+			}
+			return intVal(l.I % r.I)
+		}
+		if l.Tag == TagFloat || r.Tag == TagFloat {
+			lf := l.F
+			if l.Tag == TagInt {
+				lf = float64(l.I)
+			}
+			rf := r.F
+			if r.Tag == TagInt {
+				rf = float64(r.I)
+			}
+			switch e.Op {
+			case TOK_PLUS:
+				return floatVal(lf + rf)
+			case TOK_MINUS:
+				return floatVal(lf - rf)
+			case TOK_MUL:
+				return floatVal(lf * rf)
+			case TOK_DIV:
+				return floatVal(lf / rf)
+			case TOK_EQ:
+				return boolVal(lf == rf)
+			case TOK_NE:
+				return boolVal(lf != rf)
+			case TOK_LT:
+				return boolVal(lf < rf)
+			case TOK_LE:
+				return boolVal(lf <= rf)
+			case TOK_GT:
+				return boolVal(lf > rf)
+			case TOK_GE:
+				return boolVal(lf >= rf)
+			}
+		}
+		li := l.I
+		ri := r.I
 		switch e.Op {
 		case TOK_PLUS:
-			return intVal(l + r)
+			return intVal(li + ri)
 		case TOK_MINUS:
-			return intVal(l - r)
+			return intVal(li - ri)
 		case TOK_MUL:
-			return intVal(l * r)
+			return intVal(li * ri)
 		case TOK_DIV:
-			if r == 0 {
+			if ri == 0 {
 				panic("division by zero")
 			}
-			return intVal(l / r)
-		case TOK_MOD:
-			if r == 0 {
-				panic("division by zero")
-			}
-			return intVal(l % r)
+			return intVal(li / ri)
 		case TOK_EQ:
-			if l == r {
-				return intVal(1)
-			}
-			return intVal(0)
+			return boolVal(li == ri)
 		case TOK_NE:
-			if l != r {
-				return intVal(1)
-			}
-			return intVal(0)
+			return boolVal(li != ri)
 		case TOK_LT:
-			if l < r {
-				return intVal(1)
-			}
-			return intVal(0)
+			return boolVal(li < ri)
 		case TOK_LE:
-			if l <= r {
-				return intVal(1)
-			}
-			return intVal(0)
+			return boolVal(li <= ri)
 		case TOK_GT:
-			if l > r {
-				return intVal(1)
-			}
-			return intVal(0)
+			return boolVal(li > ri)
 		case TOK_GE:
-			if l >= r {
-				return intVal(1)
-			}
-			return intVal(0)
+			return boolVal(li >= ri)
 		}
 	}
 	panic("unknown expr")
+}
+
+func boolVal(b bool) Value {
+	if b {
+		return intVal(1)
+	}
+	return intVal(0)
 }
 
 // atofMame mirrors __str_to_float (draft/atof.s) so eval and compile reject

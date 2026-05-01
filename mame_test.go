@@ -119,6 +119,21 @@ func TestEval(t *testing.T) {
 		{`int(str(-7))`, nil, -7},
 		{`int(str(0))`, nil, 0},
 		{`int(str(1+2*3))`, nil, 7},
+		{`int(7)`, nil, 7},
+		{`int(float("3.7"))`, nil, 3},
+		{`int(float("-3.7"))`, nil, -3},
+		{`int(float(int("99")))`, nil, 99},
+		{`int(float("1.2") + 1)`, nil, 2},
+		{`int(1 + float("2.5"))`, nil, 3},
+		{`int(float("3") * 2)`, nil, 6},
+		{`int(float("10") / 4)`, nil, 2},
+		{`int(float("1") - float("0.5"))`, nil, 0},
+		{`float("1.5") < 2`, nil, 1},
+		{`float("1.5") > 2`, nil, 0},
+		{`2 == float("2")`, nil, 1},
+		{`float("1.5") != 1`, nil, 1},
+		{`float("0.5") <= float("0.5")`, nil, 1},
+		{`float("0") == 0`, nil, 1},
 		{`len("Fizz")`, nil, 4},
 		{`len("")`, nil, 0},
 		{`len("ほげ")`, nil, 6},
@@ -190,6 +205,9 @@ func TestEvalFloatStorage(t *testing.T) {
 		{`x = float("0")`, 0},
 		{`x = float("42")`, 42},
 		{`x = float("  -1.25")`, -1.25},
+		{`x = float(7)`, 7},
+		{`x = float(-3)`, -3},
+		{`x = float(float("1.5"))`, 1.5},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -256,6 +274,16 @@ func TestCompile(t *testing.T) {
 		{`x = float("3.14"); println(42)`, nil, 42},
 		{`x = float("-0.5"); println(7)`, nil, 7},
 		{`x = float(arg(1)); println(99)`, []string{"1.5"}, 99},
+		{`println(int(float("3.7")))`, nil, 3},
+		{`println(int(float("-3.7")))`, nil, -3},
+		{`println(int(7))`, nil, 7},
+		{`println(int("42"))`, nil, 42},
+		{`println(int(float("1.2") + 1))`, nil, 2},
+		{`println(int(1 + float("2.5")))`, nil, 3},
+		{`println(int(float("10") / 4))`, nil, 2},
+		{`println(float("1.5") < 2)`, nil, 1},
+		{`println(2 == float("2"))`, nil, 1},
+		{`println(float("0") == 0)`, nil, 1},
 	}
 
 	tmpDir := t.TempDir()
@@ -345,6 +373,16 @@ func TestCompileString(t *testing.T) {
 		{`println(float("4.9999999"))`, "5.000000\n"},
 		{`x = float("1.25"); println(x)`, "1.250000\n"},
 		{`print(float("1.5")); println(float("2.5"))`, "1.5000002.500000\n"},
+		{`println(str(float("3.14")))`, "3.140000\n"},
+		{`println(str(float("-2.5")))`, "-2.500000\n"},
+		{`println(float(7))`, "7.000000\n"},
+		{`println(float(-3))`, "-3.000000\n"},
+		{`x = "abc"; println(str(x))`, "abc\n"},
+		{`x = float("3.14"); println(str(x))`, "3.140000\n"},
+		{`println(float("1.2") + 1)`, "2.200000\n"},
+		{`println(1 + float("2.5"))`, "3.500000\n"},
+		{`println(float("10") / 4)`, "2.500000\n"},
+		{`println(float("3") * float("0.5"))`, "1.500000\n"},
 	}
 
 	tmpDir := t.TempDir()
@@ -422,6 +460,11 @@ func TestEvalPanic(t *testing.T) {
 		{`float("3abc")`, "invalid syntax"},
 		{`float(".")`, "invalid syntax"},
 		{`float("   ")`, "invalid syntax"},
+		{`1 + "x"`, "invalid operand types"},
+		{`"x" + 1`, "invalid operand types"},
+		{`"a" == "b"`, "invalid operand types"},
+		{`float("1.5") % 2`, "invalid operand types"},
+		{`2 % float("1.5")`, "invalid operand types"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -455,6 +498,9 @@ func TestCompilePanic(t *testing.T) {
 		{`x = float("abc"); println(0)`, "invalid float syntax"},
 		{`x = float("3abc"); println(0)`, "invalid float syntax"},
 		{`x = float("."); println(0)`, "invalid float syntax"},
+		{`println(1 + "x")`, "invalid operand types"},
+		{`println(float("1.5") % 2)`, "invalid operand types"},
+		{`println("a" == "b")`, "invalid operand types"},
 	}
 	tmpDir := t.TempDir()
 	for _, tt := range tests {

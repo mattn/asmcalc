@@ -149,52 +149,7 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 		write(w, fmt.Sprintf("  leaq .Lstr_%d(%%rip), %%rax", idx), "Heap obj ptr")
 		write(w, "  pushq %rax", "Push payload")
 	case *BinOp:
-		c.emitExpr(w, e.L)
-		c.emitExpr(w, e.R)
-		write(w, "  popq %rax", "Get R payload")
-		write(w, "  addq $8, %rsp", "Discard R tag")
-		write(w, "  popq %rbx", "Get L payload")
-		write(w, "  addq $8, %rsp", "Discard L tag")
-		switch e.Op {
-		case TOK_PLUS:
-			write(w, "  addq %rbx, %rax", "Add them")
-		case TOK_MINUS:
-			write(w, "  subq %rax, %rbx", "Subtract")
-			write(w, "  movq %rbx, %rax", "Result in RAX")
-		case TOK_MUL:
-			write(w, "  imulq %rbx, %rax", "Multiply")
-		case TOK_DIV:
-			c.usesPanic = true
-			write(w, "  movq %rax, %rcx", "Save divisor")
-			write(w, "  testq %rcx, %rcx", "Divisor == 0?")
-			write(w, "  jz __div_zero", "Panic on zero")
-			write(w, "  movq %rbx, %rax", "Move dividend to RAX")
-			write(w, "  cqto", "Sign-extend RAX into RDX")
-			write(w, "  idivq %rcx", "Divide RDX:RAX by divisor")
-		case TOK_MOD:
-			c.usesPanic = true
-			write(w, "  movq %rax, %rcx", "Save divisor")
-			write(w, "  testq %rcx, %rcx", "Divisor == 0?")
-			write(w, "  jz __div_zero", "Panic on zero")
-			write(w, "  movq %rbx, %rax", "Move dividend to RAX")
-			write(w, "  cqto", "Sign-extend RAX into RDX")
-			write(w, "  idivq %rcx", "RDX = remainder")
-			write(w, "  movq %rdx, %rax", "Result = remainder")
-		case TOK_EQ:
-			c.emitCmpSet(w, "sete", "L == R")
-		case TOK_NE:
-			c.emitCmpSet(w, "setne", "L != R")
-		case TOK_LT:
-			c.emitCmpSet(w, "setl", "L < R")
-		case TOK_LE:
-			c.emitCmpSet(w, "setle", "L <= R")
-		case TOK_GT:
-			c.emitCmpSet(w, "setg", "L > R")
-		case TOK_GE:
-			c.emitCmpSet(w, "setge", "L >= R")
-		}
-		write(w, "  pushq $0", "Tag = INT")
-		write(w, "  pushq %rax", "Save result value")
+		c.emitBinOp(w, e)
 	default:
 		panic("unknown expr")
 	}
@@ -206,6 +161,147 @@ func (c *Compiler) emitCmpSet(w io.Writer, setcc, comment string) {
 	write(w, "  movzbq %al, %rax", "Zero-extend to 64-bit")
 }
 
+// emitBinOp evaluates L and R, then dispatches at runtime: both INT -> integer
+// op; either FLOAT (and no STR) -> promote and FLOAT op; STR or FLOAT-with-%
+// -> __op_type_err. Comparisons always produce INT (0/1); arithmetic produces
+// FLOAT only on the promotion path.
+func (c *Compiler) emitBinOp(w io.Writer, e *BinOp) {
+	c.emitExpr(w, e.L)
+	c.emitExpr(w, e.R)
+	write(w, "  popq %rax", "R payload")
+	write(w, "  popq %r9", "R tag")
+	write(w, "  popq %rbx", "L payload")
+	write(w, "  popq %r10", "L tag")
+
+	id := c.labelCnt
+	c.labelCnt++
+	c.usesPanic = true
+	c.usesOpTypeErr = true
+
+	isComparison := false
+	switch e.Op {
+	case TOK_EQ, TOK_NE, TOK_LT, TOK_LE, TOK_GT, TOK_GE:
+		isComparison = true
+	}
+
+	write(w, "  testq %r9, %r9", "R == INT?")
+	write(w, fmt.Sprintf("  jnz .Lbin_promote_%d", id))
+	write(w, "  testq %r10, %r10", "L == INT?")
+	write(w, fmt.Sprintf("  jnz .Lbin_promote_%d", id))
+	c.emitBinOpInt(w, e.Op)
+	write(w, "  pushq $0", "Tag = INT")
+	write(w, "  pushq %rax")
+	write(w, fmt.Sprintf("  jmp .Lbin_done_%d", id))
+
+	write(w, fmt.Sprintf(".Lbin_promote_%d:", id))
+	if e.Op == TOK_MOD {
+		write(w, "  jmp __op_type_err", "% requires both INT")
+	} else {
+		write(w, "  cmpq $1, %r9")
+		write(w, "  je __op_type_err")
+		write(w, "  cmpq $1, %r10")
+		write(w, "  je __op_type_err")
+		write(w, "  testq %r9, %r9")
+		write(w, fmt.Sprintf("  jnz .Lbin_R_flt_%d", id))
+		write(w, "  cvtsi2sd %rax, %xmm1", "promote R")
+		write(w, fmt.Sprintf("  jmp .Lbin_R_done_%d", id))
+		write(w, fmt.Sprintf(".Lbin_R_flt_%d:", id))
+		write(w, "  movq %rax, %xmm1")
+		write(w, fmt.Sprintf(".Lbin_R_done_%d:", id))
+		write(w, "  testq %r10, %r10")
+		write(w, fmt.Sprintf("  jnz .Lbin_L_flt_%d", id))
+		write(w, "  cvtsi2sd %rbx, %xmm0", "promote L")
+		write(w, fmt.Sprintf("  jmp .Lbin_L_done_%d", id))
+		write(w, fmt.Sprintf(".Lbin_L_flt_%d:", id))
+		write(w, "  movq %rbx, %xmm0")
+		write(w, fmt.Sprintf(".Lbin_L_done_%d:", id))
+		if isComparison {
+			c.emitFloatCmp(w, e.Op)
+			write(w, "  pushq $0", "Tag = INT")
+			write(w, "  pushq %rax")
+		} else {
+			c.emitFloatArith(w, e.Op)
+			write(w, "  movq %xmm0, %rax")
+			write(w, "  pushq $2", "Tag = FLOAT")
+			write(w, "  pushq %rax")
+		}
+	}
+	write(w, fmt.Sprintf(".Lbin_done_%d:", id))
+}
+
+func (c *Compiler) emitBinOpInt(w io.Writer, op TokenType) {
+	switch op {
+	case TOK_PLUS:
+		write(w, "  addq %rbx, %rax")
+	case TOK_MINUS:
+		write(w, "  subq %rax, %rbx")
+		write(w, "  movq %rbx, %rax")
+	case TOK_MUL:
+		write(w, "  imulq %rbx, %rax")
+	case TOK_DIV:
+		write(w, "  movq %rax, %rcx")
+		write(w, "  testq %rcx, %rcx")
+		write(w, "  jz __div_zero")
+		write(w, "  movq %rbx, %rax")
+		write(w, "  cqto")
+		write(w, "  idivq %rcx")
+	case TOK_MOD:
+		write(w, "  movq %rax, %rcx")
+		write(w, "  testq %rcx, %rcx")
+		write(w, "  jz __div_zero")
+		write(w, "  movq %rbx, %rax")
+		write(w, "  cqto")
+		write(w, "  idivq %rcx")
+		write(w, "  movq %rdx, %rax")
+	case TOK_EQ:
+		c.emitCmpSet(w, "sete", "L == R")
+	case TOK_NE:
+		c.emitCmpSet(w, "setne", "L != R")
+	case TOK_LT:
+		c.emitCmpSet(w, "setl", "L < R")
+	case TOK_LE:
+		c.emitCmpSet(w, "setle", "L <= R")
+	case TOK_GT:
+		c.emitCmpSet(w, "setg", "L > R")
+	case TOK_GE:
+		c.emitCmpSet(w, "setge", "L >= R")
+	}
+}
+
+func (c *Compiler) emitFloatArith(w io.Writer, op TokenType) {
+	switch op {
+	case TOK_PLUS:
+		write(w, "  addsd %xmm1, %xmm0")
+	case TOK_MINUS:
+		write(w, "  subsd %xmm1, %xmm0")
+	case TOK_MUL:
+		write(w, "  mulsd %xmm1, %xmm0")
+	case TOK_DIV:
+		write(w, "  divsd %xmm1, %xmm0")
+	}
+}
+
+func (c *Compiler) emitFloatCmp(w io.Writer, op TokenType) {
+	write(w, "  ucomisd %xmm1, %xmm0", "Compare L vs R")
+	setcc := ""
+	switch op {
+	case TOK_EQ:
+		setcc = "sete"
+	case TOK_NE:
+		setcc = "setne"
+	case TOK_LT:
+		setcc = "setb"
+	case TOK_LE:
+		setcc = "setbe"
+	case TOK_GT:
+		setcc = "seta"
+	case TOK_GE:
+		setcc = "setae"
+	}
+	write(w, "  "+setcc+" %al")
+	write(w, "  movzbq %al, %rax")
+}
+
 func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 	switch e.Name {
 	case "int":
@@ -213,13 +309,24 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 			panic(fmt.Sprintf("int takes 1 arg, got %d", len(e.Args)))
 		}
 		c.emitExpr(w, e.Args[0])
-		write(w, "  popq %rax", "Pop heap obj ptr")
-		write(w, "  addq $8, %rsp", "Discard tag")
-		write(w, "  movq 8(%rax), %rsi", "len from header")
-		write(w, "  leaq 16(%rax), %rdi", "bytes ptr from header")
-		write(w, "  call __str_to_int", "Parse as integer")
+		write(w, "  popq %rax", "Pop payload")
+		write(w, "  popq %rbx", "Pop tag")
+		id := c.labelCnt
+		c.labelCnt++
+		write(w, "  testq %rbx, %rbx", "Already INT?")
+		write(w, fmt.Sprintf("  jz .Lto_int_done_%d", id))
+		write(w, "  cmpq $2, %rbx", "FLOAT?")
+		write(w, fmt.Sprintf("  je .Lto_int_float_%d", id))
+		write(w, "  movq 8(%rax), %rsi", "STR: len")
+		write(w, "  leaq 16(%rax), %rdi", "STR: ptr")
+		write(w, "  call __str_to_int")
+		write(w, fmt.Sprintf("  jmp .Lto_int_done_%d", id))
+		write(w, fmt.Sprintf(".Lto_int_float_%d:", id))
+		write(w, "  movq %rax, %xmm0")
+		write(w, "  cvttsd2si %xmm0, %rax", "truncate")
+		write(w, fmt.Sprintf(".Lto_int_done_%d:", id))
 		write(w, "  pushq $0", "Tag = INT")
-		write(w, "  pushq %rax", "Push value")
+		write(w, "  pushq %rax")
 		return
 	case "float":
 		if len(e.Args) != 1 {
@@ -227,25 +334,48 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		}
 		c.usesPanic = true
 		c.emitExpr(w, e.Args[0])
-		write(w, "  popq %rax", "Pop heap obj ptr")
-		write(w, "  addq $8, %rsp", "Discard tag")
-		write(w, "  movq 8(%rax), %rsi", "len from header")
-		write(w, "  leaq 16(%rax), %rdi", "bytes ptr from header")
-		write(w, "  call __str_to_float", "Parse as double (xmm0 = result)")
+		write(w, "  popq %rax", "Pop payload")
+		write(w, "  popq %rbx", "Pop tag")
+		id := c.labelCnt
+		c.labelCnt++
+		write(w, "  cmpq $2, %rbx", "Already FLOAT?")
+		write(w, fmt.Sprintf("  je .Lto_flt_done_%d", id))
+		write(w, "  testq %rbx, %rbx", "INT?")
+		write(w, fmt.Sprintf("  je .Lto_flt_int_%d", id))
+		write(w, "  movq 8(%rax), %rsi", "STR: len")
+		write(w, "  leaq 16(%rax), %rdi", "STR: ptr")
+		write(w, "  call __str_to_float")
+		write(w, "  movq %xmm0, %rax")
+		write(w, fmt.Sprintf("  jmp .Lto_flt_done_%d", id))
+		write(w, fmt.Sprintf(".Lto_flt_int_%d:", id))
+		write(w, "  cvtsi2sd %rax, %xmm0")
+		write(w, "  movq %xmm0, %rax")
+		write(w, fmt.Sprintf(".Lto_flt_done_%d:", id))
 		write(w, "  pushq $2", "Tag = FLOAT")
-		write(w, "  subq $8, %rsp", "Reserve payload slot")
-		write(w, "  movsd %xmm0, (%rsp)", "Store double bits as payload")
+		write(w, "  pushq %rax")
 		return
 	case "str":
 		if len(e.Args) != 1 {
 			panic(fmt.Sprintf("str takes 1 arg, got %d", len(e.Args)))
 		}
 		c.emitExpr(w, e.Args[0])
-		write(w, "  popq %rdi", "value -> arg1")
-		write(w, "  addq $8, %rsp", "Discard tag")
-		write(w, "  call __int_to_str", "Convert int -> heap STR obj in RAX")
+		write(w, "  popq %rax", "Pop payload")
+		write(w, "  popq %rbx", "Pop tag")
+		id := c.labelCnt
+		c.labelCnt++
+		write(w, "  cmpq $1, %rbx", "Already STR?")
+		write(w, fmt.Sprintf("  je .Lto_str_done_%d", id))
+		write(w, "  cmpq $2, %rbx", "FLOAT?")
+		write(w, fmt.Sprintf("  je .Lto_str_float_%d", id))
+		write(w, "  movq %rax, %rdi", "INT: value -> arg1")
+		write(w, "  call __int_to_str")
+		write(w, fmt.Sprintf("  jmp .Lto_str_done_%d", id))
+		write(w, fmt.Sprintf(".Lto_str_float_%d:", id))
+		write(w, "  movq %rax, %xmm0")
+		write(w, "  call __float_to_str")
+		write(w, fmt.Sprintf(".Lto_str_done_%d:", id))
 		write(w, "  pushq $1", "Tag = STR")
-		write(w, "  pushq %rax", "Push heap obj ptr")
+		write(w, "  pushq %rax")
 		return
 	case "len":
 		if len(e.Args) != 1 {
@@ -396,12 +526,14 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	c.emitPanic(w)
 	c.emitAlloc(w)
 	c.emitIntToStr(w)
+	c.emitFloatRender(w)
+	c.emitFloatToStr(w)
 	c.emitPrintln(w)
 	c.emitPrintFloat(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
 	write(w, ".bss")
-	if c.usesPrint || c.usesPrintFloat {
+	if c.usesPrint || c.usesFloatRender() {
 		write(w, "buffer:")
 		write(w, ".space 32", "32-byte buffer for number")
 	}
@@ -432,12 +564,14 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	c.emitPanic(w)
 	c.emitAlloc(w)
 	c.emitIntToStr(w)
+	c.emitFloatRender(w)
+	c.emitFloatToStr(w)
 	c.emitPrintln(w)
 	c.emitPrintFloat(w)
 	c.emitPrintlnStr(w)
 	c.emitData(w)
 	write(w, ".bss")
-	if c.usesPrint || c.usesPrintFloat {
+	if c.usesPrint || c.usesFloatRender() {
 		write(w, "buffer:")
 		write(w, ".space 32", "32-byte buffer for number")
 	}
@@ -843,6 +977,13 @@ func (c *Compiler) emitPanic(w io.Writer) {
 		write(w, "  movq $16, %rdx", "Length")
 		write(w, "  jmp __panic", "Tail-call panic")
 		write(w, "")
+		if c.usesOpTypeErr {
+			write(w, "__op_type_err:")
+			write(w, "  leaq .Lerr_optype(%rip), %rcx", "Buffer")
+			write(w, "  movq $21, %rdx", "Length")
+			write(w, "  jmp __panic", "Tail-call panic")
+			write(w, "")
+		}
 		return
 	}
 	write(w, "__panic:")
@@ -865,6 +1006,13 @@ func (c *Compiler) emitPanic(w io.Writer) {
 	write(w, "  movq $16, %rsi", "Length")
 	write(w, "  jmp __panic", "Tail-call panic")
 	write(w, "")
+	if c.usesOpTypeErr {
+		write(w, "__op_type_err:")
+		write(w, "  leaq .Lerr_optype(%rip), %rdi", "Buffer")
+		write(w, "  movq $21, %rsi", "Length")
+		write(w, "  jmp __panic", "Tail-call panic")
+		write(w, "")
+	}
 }
 
 func (c *Compiler) emitPrintln(w io.Writer) {
@@ -951,22 +1099,17 @@ func (c *Compiler) emitPrintlnWindows(w io.Writer) {
 	write(w, "")
 }
 
-// __print_float(xmm0=double) renders [-]<int>.<6 frac> into `buffer` and
-// calls __print_str. Format matches Go's %.6f.
-func (c *Compiler) emitPrintFloat(w io.Writer) {
-	if !c.usesPrintFloat {
+// __float_render(xmm0=double) -> rax=start, rdx=length. Writes the formatted
+// number into `buffer` (right-to-left). Format matches Go's %.6f.
+func (c *Compiler) emitFloatRender(w io.Writer) {
+	if !c.usesFloatRender() {
 		return
 	}
-	write(w, "__print_float:")
-	if runtime.GOOS == "windows" {
-		write(w, "  subq $56, %rsp")
-	} else {
-		write(w, "  subq $8, %rsp", "Align rsp for sub-call")
-	}
+	write(w, "__float_render:")
 	write(w, "  movq %xmm0, %rax")
 	write(w, "  testq %rax, %rax", "Sign bit?")
 	write(w, "  jns .Lpf_pos")
-	write(w, "  movl $1, %r11d", "neg_flag = 1")
+	write(w, "  movl $1, %r11d")
 	write(w, "  movsd .Lpf_neg_one(%rip), %xmm1")
 	write(w, "  mulsd %xmm1, %xmm0")
 	write(w, "  jmp .Lpf_abs_done")
@@ -1018,19 +1161,81 @@ func (c *Compiler) emitPrintFloat(w io.Writer) {
 	write(w, "  movb $45, (%r9)", "'-'")
 	write(w, "  decq %r9")
 	write(w, ".Lpf_no_sign:")
-	write(w, "  incq %r9", "First char")
+	write(w, "  incq %r9")
+	write(w, "  movq %r9, %rax", "Output: start ptr")
+	write(w, "  leaq buffer+32(%rip), %rdx")
+	write(w, "  subq %r9, %rdx", "Output: length")
+	write(w, "  ret")
+	write(w, "")
+}
+
+// __print_float(xmm0=double): renders via __float_render, then __print_str.
+func (c *Compiler) emitPrintFloat(w io.Writer) {
+	if !c.usesPrintFloat {
+		return
+	}
+	write(w, "__print_float:")
 	if runtime.GOOS == "windows" {
-		write(w, "  movq %r9, %rcx")
-		write(w, "  leaq buffer+32(%rip), %rdx")
-		write(w, "  subq %r9, %rdx")
+		write(w, "  subq $56, %rsp")
+		write(w, "  call __float_render")
+		write(w, "  movq %rax, %rcx")
 		write(w, "  call __print_str")
 		write(w, "  addq $56, %rsp")
 	} else {
-		write(w, "  movq %r9, %rdi")
-		write(w, "  leaq buffer+32(%rip), %rsi")
-		write(w, "  subq %r9, %rsi")
+		write(w, "  subq $8, %rsp")
+		write(w, "  call __float_render")
+		write(w, "  movq %rax, %rdi")
+		write(w, "  movq %rdx, %rsi")
 		write(w, "  call __print_str")
 		write(w, "  addq $8, %rsp")
+	}
+	write(w, "  ret")
+	write(w, "")
+}
+
+// __float_to_str(xmm0=double) -> rax=heap obj ptr. Renders via __float_render
+// then bump-allocates [refcount,len,bytes] and copies.
+func (c *Compiler) emitFloatToStr(w io.Writer) {
+	if !c.usesFloatToStr {
+		return
+	}
+	write(w, "__float_to_str:")
+	if runtime.GOOS == "windows" {
+		write(w, "  subq $56, %rsp", "32 shadow + 24 spill")
+		write(w, "  call __float_render")
+		write(w, "  movq %rax, 32(%rsp)", "spill start")
+		write(w, "  movq %rdx, 40(%rsp)", "spill length")
+		write(w, "  movq %rdx, %rdi")
+		write(w, "  addq $16, %rdi", "alloc size")
+		write(w, "  call __alloc")
+		write(w, "  movq %rax, 48(%rsp)", "spill heap ptr")
+		write(w, "  movq $0, (%rax)", "refcount")
+		write(w, "  movq 40(%rsp), %rcx")
+		write(w, "  movq %rcx, 8(%rax)", "len")
+		write(w, "  movq 32(%rsp), %rsi")
+		write(w, "  leaq 16(%rax), %rdi")
+		write(w, "  cld")
+		write(w, "  rep movsb")
+		write(w, "  movq 48(%rsp), %rax")
+		write(w, "  addq $56, %rsp")
+	} else {
+		write(w, "  subq $24, %rsp", "spills for start, length, heap ptr")
+		write(w, "  call __float_render")
+		write(w, "  movq %rax, 0(%rsp)")
+		write(w, "  movq %rdx, 8(%rsp)")
+		write(w, "  movq %rdx, %rdi")
+		write(w, "  addq $16, %rdi", "alloc size")
+		write(w, "  call __alloc")
+		write(w, "  movq %rax, 16(%rsp)")
+		write(w, "  movq $0, (%rax)", "refcount")
+		write(w, "  movq 8(%rsp), %rcx")
+		write(w, "  movq %rcx, 8(%rax)", "len")
+		write(w, "  movq 0(%rsp), %rsi")
+		write(w, "  leaq 16(%rax), %rdi")
+		write(w, "  cld")
+		write(w, "  rep movsb")
+		write(w, "  movq 16(%rsp), %rax")
+		write(w, "  addq $24, %rsp")
 	}
 	write(w, "  ret")
 	write(w, "")
@@ -1073,7 +1278,7 @@ func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
 }
 
 func (c *Compiler) emitData(w io.Writer) {
-	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg && !c.usesPanic && !c.usesStrToFloat && !c.usesPrintFloat {
+	if len(c.strLits) == 0 && !c.usesPrintStr && !c.usesArg && !c.usesPanic && !c.usesStrToFloat && !c.usesFloatRender() && !c.usesOpTypeErr {
 		return
 	}
 	write(w, ".data")
@@ -1095,6 +1300,10 @@ func (c *Compiler) emitData(w io.Writer) {
 		write(w, ".Lerr_div:")
 		write(w, `.ascii "division by zero"`)
 	}
+	if c.usesOpTypeErr {
+		write(w, ".Lerr_optype:")
+		write(w, `.ascii "invalid operand types"`)
+	}
 	if c.usesStrToFloat {
 		write(w, ".Lerr_float:")
 		write(w, `.ascii "invalid float syntax"`)
@@ -1106,7 +1315,7 @@ func (c *Compiler) emitData(w io.Writer) {
 		write(w, ".Latof_neg_one:")
 		write(w, ".double -1.0")
 	}
-	if c.usesPrintFloat {
+	if c.usesFloatRender() {
 		write(w, ".align 8")
 		write(w, ".Lpf_neg_one:")
 		write(w, ".double -1.0")
