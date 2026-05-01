@@ -4,6 +4,7 @@ type Expr interface{ exprNode() }
 type Stmt interface{ stmtNode() }
 
 type NumLit struct{ Value int }
+type FloatLit struct{ Value float64 }
 type StrLit struct{ Value string }
 type ArgRef struct{ Index Expr }
 type NargExpr struct{}
@@ -18,6 +19,7 @@ type CallExpr struct {
 }
 
 func (*NumLit) exprNode()   {}
+func (*FloatLit) exprNode() {}
 func (*StrLit) exprNode()   {}
 func (*ArgRef) exprNode()   {}
 func (*NargExpr) exprNode() {}
@@ -172,6 +174,9 @@ func (c *Compiler) parseTerm() Expr {
 func (c *Compiler) parseFactor() Expr {
 	if c.peek().Type == TOK_NUM {
 		return &NumLit{Value: c.consume(TOK_NUM).Value}
+	}
+	if c.peek().Type == TOK_FNUM {
+		return &FloatLit{Value: c.consume(TOK_FNUM).Float}
 	}
 	if c.peek().Type == TOK_STRING {
 		return &StrLit{Value: c.consume(TOK_STRING).Name}

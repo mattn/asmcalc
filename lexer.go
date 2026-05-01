@@ -30,12 +30,14 @@ const (
 	TOK_GE
 	TOK_SEMI
 	TOK_STRING
+	TOK_FNUM
 	TOK_EOF
 )
 
 type Token struct {
 	Type  TokenType
 	Value int
+	Float float64
 	Name  string
 }
 
@@ -61,12 +63,7 @@ func (c *Compiler) Lex() {
 			continue
 		}
 		if unicode.IsDigit(rune(ch)) {
-			value := 0
-			for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
-				value = value*10 + int(c.input[c.pos]-'0')
-				c.pos++
-			}
-			c.tokens = append(c.tokens, Token{Type: TOK_NUM, Value: value})
+			c.tokens = append(c.tokens, c.lexNumber(false))
 			continue
 		}
 		if unicode.IsLetter(rune(ch)) {
@@ -92,12 +89,7 @@ func (c *Compiler) Lex() {
 				}
 				if canNeg {
 					c.pos++
-					value := 0
-					for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
-						value = value*10 + int(c.input[c.pos]-'0')
-						c.pos++
-					}
-					c.tokens = append(c.tokens, Token{Type: TOK_NUM, Value: -value})
+					c.tokens = append(c.tokens, c.lexNumber(true))
 					continue
 				}
 			}
@@ -213,6 +205,34 @@ func (c *Compiler) Lex() {
 		panic(fmt.Sprintf("unknown char: %c", ch))
 	}
 	c.tokens = append(c.tokens, Token{Type: TOK_EOF})
+}
+
+// lexNumber reads digits and, if followed by `.<digits>`, a fractional part.
+// Returns TOK_NUM or TOK_FNUM. neg flips the sign of the parsed value.
+func (c *Compiler) lexNumber(neg bool) Token {
+	value := 0
+	for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
+		value = value*10 + int(c.input[c.pos]-'0')
+		c.pos++
+	}
+	if c.pos+1 < len(c.input) && c.input[c.pos] == '.' && unicode.IsDigit(rune(c.input[c.pos+1])) {
+		c.pos++
+		f := float64(value)
+		scale := 1.0
+		for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
+			scale /= 10
+			f += float64(c.input[c.pos]-'0') * scale
+			c.pos++
+		}
+		if neg {
+			f = -f
+		}
+		return Token{Type: TOK_FNUM, Float: f}
+	}
+	if neg {
+		value = -value
+	}
+	return Token{Type: TOK_NUM, Value: value}
 }
 
 func (c *Compiler) peek() Token {

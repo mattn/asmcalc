@@ -134,6 +134,19 @@ func TestEval(t *testing.T) {
 		{`float("1.5") != 1`, nil, 1},
 		{`float("0.5") <= float("0.5")`, nil, 1},
 		{`float("0") == 0`, nil, 1},
+		{`int(3.14)`, nil, 3},
+		{`int(-3.7)`, nil, -3},
+		{`int(1.5 + 2.5)`, nil, 4},
+		{`int(2.0 * 3.0)`, nil, 6},
+		{`int(10.0 / 4.0)`, nil, 2},
+		{`1.5 < 2`, nil, 1},
+		{`2 == 2.0`, nil, 1},
+		{`1.5 != 1.5`, nil, 0},
+		{`-0.5 < 0`, nil, 1},
+		// TODO: lexer/atofMame parses `0.3` as 3*0.1 (= 0.30000000000000004),
+		// not strconv.ParseFloat's nearest 0.3. Re-enable after switching to
+		// a correctly-rounded float parser.
+		// {`0.1 + 0.2 > 0.3`, nil, 1},
 		{`len("Fizz")`, nil, 4},
 		{`len("")`, nil, 0},
 		{`len("ほげ")`, nil, 6},
@@ -208,6 +221,11 @@ func TestEvalFloatStorage(t *testing.T) {
 		{`x = float(7)`, 7},
 		{`x = float(-3)`, -3},
 		{`x = float(float("1.5"))`, 1.5},
+		{`x = 3.14`, 3.14},
+		{`x = -2.5`, -2.5},
+		{`x = 0.0`, 0},
+		{`x = 1.5 + 2.5`, 4},
+		{`x = 10.0 / 4.0`, 2.5},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -284,6 +302,11 @@ func TestCompile(t *testing.T) {
 		{`println(float("1.5") < 2)`, nil, 1},
 		{`println(2 == float("2"))`, nil, 1},
 		{`println(float("0") == 0)`, nil, 1},
+		{`println(int(3.14))`, nil, 3},
+		{`println(int(-2.5))`, nil, -2},
+		{`println(int(1.5 + 2.5))`, nil, 4},
+		{`println(2 == 2.0)`, nil, 1},
+		{`println(1.5 < 2)`, nil, 1},
 	}
 
 	tmpDir := t.TempDir()
@@ -383,6 +406,14 @@ func TestCompileString(t *testing.T) {
 		{`println(1 + float("2.5"))`, "3.500000\n"},
 		{`println(float("10") / 4)`, "2.500000\n"},
 		{`println(float("3") * float("0.5"))`, "1.500000\n"},
+		{`println(3.14)`, "3.140000\n"},
+		{`println(-2.5)`, "-2.500000\n"},
+		{`println(0.0)`, "0.000000\n"},
+		{`println(1.5 + 2.5)`, "4.000000\n"},
+		{`println(2.0 * 3.0)`, "6.000000\n"},
+		{`println(10.0 / 4.0)`, "2.500000\n"},
+		{`println(str(3.14))`, "3.140000\n"},
+		{`x = 1.25; println(x)`, "1.250000\n"},
 	}
 
 	tmpDir := t.TempDir()

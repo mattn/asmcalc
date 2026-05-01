@@ -116,6 +116,8 @@ func (c *Compiler) evalExpr(e Expr) Value {
 	switch e := e.(type) {
 	case *NumLit:
 		return intVal(e.Value)
+	case *FloatLit:
+		return floatVal(e.Value)
 	case *ArgRef:
 		idx := c.evalExpr(e.Index).I
 		if idx < 1 || idx > len(c.args) {

@@ -3,6 +3,7 @@ package mame
 import (
 	"fmt"
 	"io"
+	"math"
 	"runtime"
 	"strings"
 )
@@ -117,6 +118,11 @@ func (c *Compiler) emitExpr(w io.Writer, e Expr) {
 	case *NumLit:
 		write(w, "  pushq $0", "Tag = INT")
 		write(w, fmt.Sprintf("  movq $%d, %%rax", e.Value), "Load number")
+		write(w, "  pushq %rax", "Push value")
+	case *FloatLit:
+		bits := math.Float64bits(e.Value)
+		write(w, "  pushq $2", "Tag = FLOAT")
+		write(w, fmt.Sprintf("  movabsq $0x%x, %%rax", bits), fmt.Sprintf("Float bits: %g", e.Value))
 		write(w, "  pushq %rax", "Push value")
 	case *ArgRef:
 		c.emitExpr(w, e.Index)
