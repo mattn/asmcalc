@@ -209,6 +209,9 @@ func (c *Compiler) Lex() {
 
 // lexNumber reads digits and, if followed by `.<digits>`, a fractional part.
 // Returns TOK_NUM or TOK_FNUM. neg flips the sign of the parsed value.
+// The fractional part is built as an integer mantissa and divided once by
+// 10^n so the result is single-rounded (matches strconv.ParseFloat for inputs
+// that fit in int64).
 func (c *Compiler) lexNumber(neg bool) Token {
 	value := 0
 	for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
@@ -217,13 +220,14 @@ func (c *Compiler) lexNumber(neg bool) Token {
 	}
 	if c.pos+1 < len(c.input) && c.input[c.pos] == '.' && unicode.IsDigit(rune(c.input[c.pos+1])) {
 		c.pos++
-		f := float64(value)
-		scale := 1.0
+		mantissa := value
+		scale := 1
 		for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
-			scale /= 10
-			f += float64(c.input[c.pos]-'0') * scale
+			mantissa = mantissa*10 + int(c.input[c.pos]-'0')
+			scale *= 10
 			c.pos++
 		}
+		f := float64(mantissa) / float64(scale)
 		if neg {
 			f = -f
 		}

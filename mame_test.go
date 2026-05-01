@@ -143,10 +143,7 @@ func TestEval(t *testing.T) {
 		{`2 == 2.0`, nil, 1},
 		{`1.5 != 1.5`, nil, 0},
 		{`-0.5 < 0`, nil, 1},
-		// TODO: lexer/atofMame parses `0.3` as 3*0.1 (= 0.30000000000000004),
-		// not strconv.ParseFloat's nearest 0.3. Re-enable after switching to
-		// a correctly-rounded float parser.
-		// {`0.1 + 0.2 > 0.3`, nil, 1},
+		{`0.1 + 0.2 > 0.3`, nil, 1},
 		{`len("Fizz")`, nil, 4},
 		{`len("")`, nil, 0},
 		{`len("ほげ")`, nil, 6},
