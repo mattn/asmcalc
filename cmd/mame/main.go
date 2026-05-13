@@ -175,7 +175,7 @@ func buildExe(compiler *mame.Compiler, exePath, tmpDir string) error {
 
 	ldArgs := []string{objFile, "-o", exePath}
 	if runtime.GOOS == "windows" {
-		ldArgs = append(ldArgs, "-lkernel32", "-lshell32")
+		ldArgs = append(ldArgs, "-lkernel32", "-lshell32", "-ladvapi32")
 	}
 	if out, err := exec.Command("ld", ldArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("ld failed: %v\n%s", err, out)

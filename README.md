@@ -13,6 +13,7 @@ Supports both Linux and Windows.
 - `break` exits the innermost `while` loop
 - Command-line arguments via `arg(N)` (1-indexed, returns string) and `narg()` for the count
 - `int(s)` to parse a string as integer; `str(n)` to format an int as string; `len(s)` for byte length
+- `rand()` returns a non-negative 63-bit random int (libc-free: Linux `getrandom`, Windows `RtlGenRandom`)
 - `println(expr)` / `print(expr)` builtins: prints the value (int or string)
 
 ## Requirements

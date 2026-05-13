@@ -174,6 +174,9 @@ func TestEval(t *testing.T) {
 		{"i=0; while 1 { i=i+1; if i==5 { break } }; i", nil, 5},
 		{"i=0; j=0; while i<3 { k=0; while k<10 { if k==2 { break }; k=k+1 }; j=j+k; i=i+1 }; j", nil, 6},
 		{"i=0; while i<5 { i=i+1 }; i", nil, 5},
+		{"rand() >= 0", nil, 1},
+		{"rand() % 1", nil, 0},
+		{"n = rand() % 100; if n>=0 { if n<100 { 1 } else { 0 } } else { 0 }", nil, 1},
 	}
 
 	for _, tt := range tests {
@@ -304,6 +307,9 @@ func TestCompile(t *testing.T) {
 		{`println(int(1.5 + 2.5))`, nil, 4},
 		{`println(2 == 2.0)`, nil, 1},
 		{`println(1.5 < 2)`, nil, 1},
+		{`println(rand() >= 0)`, nil, 1},
+		{`println(rand() % 1)`, nil, 0},
+		{`n = rand() % 50; if n>=0 { if n<50 { println(1) } else { println(0) } } else { println(0) }`, nil, 1},
 	}
 
 	tmpDir := t.TempDir()
@@ -342,7 +348,7 @@ func TestCompile(t *testing.T) {
 
 			var ldCmd *exec.Cmd
 			if runtime.GOOS == "windows" {
-				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32")
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32", "-ladvapi32")
 			} else {
 				ldCmd = exec.Command("ld", objFile, "-o", exeFile)
 			}
@@ -449,7 +455,7 @@ func TestCompileString(t *testing.T) {
 
 			var ldCmd *exec.Cmd
 			if runtime.GOOS == "windows" {
-				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32")
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32", "-ladvapi32")
 			} else {
 				ldCmd = exec.Command("ld", objFile, "-o", exeFile)
 			}
@@ -560,7 +566,7 @@ func TestCompilePanic(t *testing.T) {
 			}
 			var ldCmd *exec.Cmd
 			if runtime.GOOS == "windows" {
-				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32")
+				ldCmd = exec.Command("ld", objFile, "-o", exeFile, "-lkernel32", "-lshell32", "-ladvapi32")
 			} else {
 				ldCmd = exec.Command("ld", objFile, "-o", exeFile)
 			}

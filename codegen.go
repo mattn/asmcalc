@@ -394,6 +394,15 @@ func (c *Compiler) emitCall(w io.Writer, e *CallExpr) {
 		write(w, "  pushq $0", "Tag = INT")
 		write(w, "  pushq %rax", "Push len")
 		return
+	case "rand":
+		if len(e.Args) != 0 {
+			panic(fmt.Sprintf("rand takes 0 args, got %d", len(e.Args)))
+		}
+		c.usesRand = true
+		write(w, "  call __rand", "Random 63-bit int")
+		write(w, "  pushq $0", "Tag = INT")
+		write(w, "  pushq %rax", "Push value")
+		return
 	case "panic":
 		if len(e.Args) != 1 {
 			panic(fmt.Sprintf("panic takes 1 arg, got %d", len(e.Args)))
@@ -537,6 +546,7 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	c.emitPrintln(w)
 	c.emitPrintFloat(w)
 	c.emitPrintlnStr(w)
+	c.emitRand(w)
 	c.emitData(w)
 	write(w, ".bss")
 	if c.usesPrint || c.usesFloatRender() {
@@ -575,6 +585,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	c.emitPrintln(w)
 	c.emitPrintFloat(w)
 	c.emitPrintlnStr(w)
+	c.emitRand(w)
 	c.emitData(w)
 	write(w, ".bss")
 	if c.usesPrint || c.usesFloatRender() {
@@ -1279,6 +1290,40 @@ func (c *Compiler) emitPrintlnStrWindows(w io.Writer) {
 	write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
 	write(w, "  call WriteFile", "Write to stdout")
 	write(w, "  addq $56, %rsp", "Restore stack")
+	write(w, "  ret", "Return")
+	write(w, "")
+}
+
+// __rand() -> rax = non-negative 63-bit random int. Linux: SYS_getrandom
+// (318) into an 8-byte stack buffer. Windows: SystemFunction036 (RtlGenRandom)
+// from advapi32.dll. Top bit is cleared so the result fits in a signed int.
+func (c *Compiler) emitRand(w io.Writer) {
+	if !c.usesRand {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		write(w, "__rand:")
+		write(w, "  subq $40, %rsp", "32 shadow + 8 buffer (RSP 16-aligned)")
+		write(w, "  leaq 32(%rsp), %rcx", "RandomBuffer ptr (above shadow)")
+		write(w, "  movq $8, %rdx", "RandomBufferLength = 8")
+		write(w, "  call SystemFunction036", "RtlGenRandom")
+		write(w, "  movq 32(%rsp), %rax", "Load 8 random bytes")
+		write(w, "  shrq $1, %rax", "Clear top bit -> non-negative")
+		write(w, "  addq $40, %rsp", "Restore stack")
+		write(w, "  ret", "Return")
+		write(w, "")
+		return
+	}
+	write(w, "__rand:")
+	write(w, "  subq $16, %rsp", "8-byte buffer + 8 align")
+	write(w, "  movq %rsp, %rdi", "buf = rsp")
+	write(w, "  movq $8, %rsi", "buflen = 8")
+	write(w, "  xorq %rdx, %rdx", "flags = 0")
+	write(w, "  movq $318, %rax", "SYS_getrandom")
+	write(w, "  syscall", "Call kernel")
+	write(w, "  movq (%rsp), %rax", "Load 8 random bytes")
+	write(w, "  shrq $1, %rax", "Clear top bit -> non-negative")
+	write(w, "  addq $16, %rsp", "Restore stack")
 	write(w, "  ret", "Return")
 	write(w, "")
 }

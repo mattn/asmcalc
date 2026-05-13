@@ -1,6 +1,8 @@
 package mame
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"runtime"
@@ -24,6 +26,7 @@ type Compiler struct {
 	usesIntToStr   bool
 	usesStrToFloat bool
 	usesFloatToStr bool
+	usesRand       bool
 	usesPanic      bool
 	usesOpTypeErr  bool
 	strLits        []string
@@ -226,6 +229,15 @@ func (c *Compiler) evalExpr(e Expr) Value {
 				panic("panic() expects a string")
 			}
 			panic(v.S)
+		case "rand":
+			if len(e.Args) != 0 {
+				panic(fmt.Sprintf("rand takes 0 args, got %d", len(e.Args)))
+			}
+			var b [8]byte
+			if _, err := rand.Read(b[:]); err != nil {
+				panic(fmt.Sprintf("rand(): %v", err))
+			}
+			return intVal(int(binary.LittleEndian.Uint64(b[:]) >> 1))
 		}
 		panic(fmt.Sprintf("unknown function: %s", e.Name))
 	case *StrLit:
