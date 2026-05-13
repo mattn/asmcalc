@@ -1,0 +1,14 @@
+# Estimate pi via Monte Carlo: sample N points in the unit square and
+# count how many land inside the unit quarter circle. pi ~= 4 * hits / N.
+# Usage: mame run examples/pi.mame [N]   (default N = 100000)
+n = 100000
+if narg() >= 1 { n = int(arg(1)) }
+hits = 0
+i = 0
+while i < n {
+  x = float(rand() % 1000000) / 1000000.0
+  y = float(rand() % 1000000) / 1000000.0
+  if x*x + y*y <= 1.0 { hits = hits + 1 }
+  i = i + 1
+}
+println(4.0 * float(hits) / float(n))
