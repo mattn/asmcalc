@@ -7,6 +7,7 @@ import (
 	"io"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 type Compiler struct {
@@ -142,7 +143,7 @@ func (c *Compiler) evalExpr(e Expr) Value {
 			case TagStr:
 				fmt.Print(v.S)
 			case TagFloat:
-				fmt.Printf("%.6f", v.F)
+				fmt.Print(formatFloatMame(v.F))
 			default:
 				fmt.Print(v.I)
 			}
@@ -156,7 +157,7 @@ func (c *Compiler) evalExpr(e Expr) Value {
 			case TagStr:
 				fmt.Println(v.S)
 			case TagFloat:
-				fmt.Printf("%.6f\n", v.F)
+				fmt.Println(formatFloatMame(v.F))
 			default:
 				fmt.Println(v.I)
 			}
@@ -208,7 +209,7 @@ func (c *Compiler) evalExpr(e Expr) Value {
 			case TagInt:
 				return strVal(strconv.Itoa(v.I))
 			case TagFloat:
-				return strVal(fmt.Sprintf("%.6f", v.F))
+				return strVal(formatFloatMame(v.F))
 			}
 			panic("str(): unknown tag")
 		case "len":
@@ -325,6 +326,22 @@ func boolVal(b bool) Value {
 		return intVal(1)
 	}
 	return intVal(0)
+}
+
+// formatFloatMame renders a float using floatPrintDigits fractional digits,
+// then trims trailing zeros while keeping at least one digit after '.'. The
+// asm renderer in codegen.go uses the same rule.
+func formatFloatMame(v float64) string {
+	s := fmt.Sprintf("%.*f", floatPrintDigits, v)
+	dot := strings.IndexByte(s, '.')
+	if dot < 0 {
+		return s
+	}
+	end := len(s)
+	for end > dot+2 && s[end-1] == '0' {
+		end--
+	}
+	return s[:end]
 }
 
 // atofMame mirrors __str_to_float (draft/atof.s) so eval and compile reject

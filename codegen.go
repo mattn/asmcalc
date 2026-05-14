@@ -11,7 +11,33 @@ import (
 const (
 	commentColumn = 32
 	heapSize      = 1 << 20 // 1 MiB bump heap
+	// floatPrintDigits is the number of fractional digits computed when
+	// rendering a float via print/println/str. Trailing zeros are then
+	// trimmed so "3.0" stays "3.0" but "3.140000..." collapses. 17 is the
+	// round-trip-safe width for IEEE 754 doubles.
+	floatPrintDigits = 17
 )
+
+// floatPrintScale returns 10^floatPrintDigits.
+func floatPrintScale() int64 {
+	s := int64(1)
+	for i := 0; i < floatPrintDigits; i++ {
+		s *= 10
+	}
+	return s
+}
+
+// numericBufSize is the size of the global `buffer` used by integer and
+// float renderers. Must hold a 20-digit int64 + sign + '.' + N fractional
+// digits, with some slack. Rounded up to a multiple of 16.
+func numericBufSize() int {
+	minSize := 32
+	needed := 22 + floatPrintDigits
+	if needed > minSize {
+		minSize = needed
+	}
+	return (minSize + 15) &^ 15
+}
 
 func write(w io.Writer, code string, comment ...string) {
 	line := code
@@ -551,7 +577,7 @@ func (c *Compiler) compileLinux(w io.Writer) error {
 	write(w, ".bss")
 	if c.usesPrint || c.usesFloatRender() {
 		write(w, "buffer:")
-		write(w, ".space 32", "32-byte buffer for number")
+		write(w, fmt.Sprintf(".space %d", numericBufSize()), "buffer for number")
 	}
 	c.emitHeapBss(w)
 	c.emitBssVars(w)
@@ -590,7 +616,7 @@ func (c *Compiler) compileWindows(w io.Writer) error {
 	write(w, ".bss")
 	if c.usesPrint || c.usesFloatRender() {
 		write(w, "buffer:")
-		write(w, ".space 32", "32-byte buffer for number")
+		write(w, fmt.Sprintf(".space %d", numericBufSize()), "buffer for number")
 	}
 	if c.usesPrint || c.usesPrintStr || c.usesArg || c.usesPanic {
 		write(w, "written:")
@@ -1048,7 +1074,7 @@ func (c *Compiler) emitPrintln(w io.Writer) {
 	write(w, "  negq %rax", "Absolute value for unsigned div")
 	write(w, ".Lpi_abs:")
 	write(w, "  movq $10, %r8", "Base 10")
-	write(w, "  leaq buffer+31(%rip), %r9", "Last byte of buffer")
+	write(w, fmt.Sprintf("  leaq buffer+%d(%%rip), %%r9", numericBufSize()-1), "Last byte of buffer")
 	write(w, ".Lpi_conv:")
 	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
 	write(w, "  divq %r8", "RAX / 10")
@@ -1066,7 +1092,7 @@ func (c *Compiler) emitPrintln(w io.Writer) {
 	write(w, "  movq $1, %rax", "Syscall: write")
 	write(w, "  movq $1, %rdi", "Stdout")
 	write(w, "  movq %r9, %rsi", "Buffer")
-	write(w, "  leaq buffer+32(%rip), %rdx", "Past end of buffer")
+	write(w, fmt.Sprintf("  leaq buffer+%d(%%rip), %%rdx", numericBufSize()), "Past end of buffer")
 	write(w, "  subq %r9, %rdx", "Length")
 	write(w, "  syscall", "Call kernel")
 	write(w, "  movq %r10, %rax", "Return original value")
@@ -1084,7 +1110,7 @@ func (c *Compiler) emitPrintlnWindows(w io.Writer) {
 	write(w, "  negq %rax", "Absolute value for unsigned div")
 	write(w, ".Lpi_abs:")
 	write(w, "  movq $10, %r8", "Base 10")
-	write(w, "  leaq buffer+31(%rip), %r9", "Last byte of buffer")
+	write(w, fmt.Sprintf("  leaq buffer+%d(%%rip), %%r9", numericBufSize()-1), "Last byte of buffer")
 	write(w, ".Lpi_conv:")
 	write(w, "  xorq %rdx, %rdx", "Clear RDX for division")
 	write(w, "  divq %r8", "RAX / 10")
@@ -1105,7 +1131,7 @@ func (c *Compiler) emitPrintlnWindows(w io.Writer) {
 	write(w, "  call GetStdHandle", "Get stdout handle")
 	write(w, "  movq %rax, %rcx", "Handle")
 	write(w, "  movq 48(%rsp), %rdx", "Buffer ptr")
-	write(w, "  leaq buffer+32(%rip), %r8", "Past end of buffer")
+	write(w, fmt.Sprintf("  leaq buffer+%d(%%rip), %%r8", numericBufSize()), "Past end of buffer")
 	write(w, "  subq %rdx, %r8", "Length")
 	write(w, "  leaq written(%rip), %r9", "Bytes written")
 	write(w, "  movq $0, 32(%rsp)", "lpOverlapped = NULL")
@@ -1117,7 +1143,8 @@ func (c *Compiler) emitPrintlnWindows(w io.Writer) {
 }
 
 // __float_render(xmm0=double) -> rax=start, rdx=length. Writes the formatted
-// number into `buffer` (right-to-left). Format matches Go's %.6f.
+// number into `buffer` (right-to-left) using floatPrintDigits fractional
+// digits, then trims trailing zeros (keeping at least one digit after '.').
 func (c *Compiler) emitFloatRender(w io.Writer) {
 	if !c.usesFloatRender() {
 		return
@@ -1133,21 +1160,24 @@ func (c *Compiler) emitFloatRender(w io.Writer) {
 	write(w, ".Lpf_pos:")
 	write(w, "  xorl %r11d, %r11d")
 	write(w, ".Lpf_abs_done:")
+	scale := floatPrintScale()
 	write(w, "  cvttsd2si %xmm0, %r10", "Integer part (truncate)")
 	write(w, "  cvtsi2sd %r10, %xmm1")
 	write(w, "  subsd %xmm1, %xmm0", "xmm0 = fractional")
-	write(w, "  movsd .Lpf_million(%rip), %xmm1")
+	write(w, "  movsd .Lpf_scale(%rip), %xmm1")
 	write(w, "  mulsd %xmm1, %xmm0")
-	write(w, "  cvtsd2si %xmm0, %rcx", "round-to-nearest-even (matches %.6f)")
-	write(w, "  cmpq $1000000, %rcx")
+	write(w, "  cvtsd2si %xmm0, %rcx", fmt.Sprintf("round-to-nearest-even (matches %%.%df)", floatPrintDigits))
+	// 10^17 doesn't fit a 32-bit signed immediate, so load via movabsq.
+	write(w, fmt.Sprintf("  movabsq $%d, %%r9", scale), "10^N scale")
+	write(w, "  cmpq %r9, %rcx")
 	write(w, "  jl .Lpf_no_carry")
-	write(w, "  subq $1000000, %rcx", "Carry (e.g. 4.9999999 -> 5.000000)")
+	write(w, "  subq %r9, %rcx", "Carry (e.g. 4.9999...->5.000...)")
 	write(w, "  incq %r10")
 	write(w, ".Lpf_no_carry:")
-	write(w, "  leaq buffer+31(%rip), %r9", "Write right-to-left from last byte")
+	write(w, fmt.Sprintf("  leaq buffer+%d(%%rip), %%r9", numericBufSize()-1), "Write right-to-left from last byte")
 	write(w, "  movq $10, %rdi")
 	write(w, "  movq %rcx, %rax")
-	write(w, "  movq $6, %r8", "6 fractional digits")
+	write(w, fmt.Sprintf("  movq $%d, %%r8", floatPrintDigits), fmt.Sprintf("%d fractional digits", floatPrintDigits))
 	write(w, ".Lpf_frac:")
 	write(w, "  xorq %rdx, %rdx")
 	write(w, "  divq %rdi")
@@ -1178,9 +1208,25 @@ func (c *Compiler) emitFloatRender(w io.Writer) {
 	write(w, "  movb $45, (%r9)", "'-'")
 	write(w, "  decq %r9")
 	write(w, ".Lpf_no_sign:")
-	write(w, "  incq %r9")
+	write(w, "  incq %r9", "First char")
+	// Trim trailing fractional zeros, keeping at least one digit after '.'.
+	// Fractional region spans [buffer+firstFrac, buffer+lastByte]; '.' sits
+	// at buffer+firstFrac-1.
+	firstFrac := numericBufSize() - floatPrintDigits
+	lastByte := numericBufSize() - 1
+	write(w, fmt.Sprintf("  leaq buffer+%d(%%rip), %%r10", lastByte), "End (last fractional digit)")
+	write(w, fmt.Sprintf("  leaq buffer+%d(%%rip), %%rdi", firstFrac), "Min end (keep one frac digit)")
+	write(w, ".Lpf_trim:")
+	write(w, "  cmpq %rdi, %r10")
+	write(w, "  jbe .Lpf_trim_done", "At min: stop")
+	write(w, "  cmpb $48, (%r10)", "Zero?")
+	write(w, "  jne .Lpf_trim_done")
+	write(w, "  decq %r10")
+	write(w, "  jmp .Lpf_trim")
+	write(w, ".Lpf_trim_done:")
+	write(w, "  incq %r10", "Past-end after trim")
 	write(w, "  movq %r9, %rax", "Output: start ptr")
-	write(w, "  leaq buffer+32(%rip), %rdx")
+	write(w, "  movq %r10, %rdx")
 	write(w, "  subq %r9, %rdx", "Output: length")
 	write(w, "  ret")
 	write(w, "")
@@ -1370,7 +1416,7 @@ func (c *Compiler) emitData(w io.Writer) {
 		write(w, ".align 8")
 		write(w, ".Lpf_neg_one:")
 		write(w, ".double -1.0")
-		write(w, ".Lpf_million:")
-		write(w, ".double 1000000.0")
+		write(w, ".Lpf_scale:")
+		write(w, fmt.Sprintf(".double %d.0", floatPrintScale()))
 	}
 }
