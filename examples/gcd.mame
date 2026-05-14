@@ -1,0 +1,10 @@
+# Greatest common divisor (Euclidean algorithm).
+# Usage: mame run examples/gcd.mame A B
+a = int(arg(1))
+b = int(arg(2))
+while b != 0 {
+  t = a % b
+  a = b
+  b = t
+}
+println(a)

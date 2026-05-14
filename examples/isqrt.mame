@@ -1,0 +1,11 @@
+# Integer square root — largest k with k*k <= N. Binary search.
+# Usage: mame run examples/isqrt.mame N
+n = int(arg(1))
+lo = 0
+hi = n
+if hi > 3037000499 { hi = 3037000499 }
+while lo < hi {
+  mid = (lo + hi + 1) / 2
+  if mid * mid <= n { lo = mid } else { hi = mid - 1 }
+}
+println(lo)

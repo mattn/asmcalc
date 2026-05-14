@@ -1,0 +1,9 @@
+# Compute N! (factorial). Usage: mame run examples/factorial.mame N
+n = int(arg(1))
+r = 1
+i = 2
+while i <= n {
+  r = r * i
+  i = i + 1
+}
+println(r)

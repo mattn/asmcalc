@@ -1,0 +1,38 @@
+# Mandelbrot set rendered with fixed-point integer arithmetic.
+# SCALE = 10000 means "1.0" is stored as 10000.
+# Output uses '.', '-', '+', '*', '#' for escape time, ' ' for in-set points.
+# Usage: mame run examples/mandelbrot.mame
+W = 78
+H = 30
+SCALE = 10000
+MAX = 40
+y = 0
+while y < H {
+  x = 0
+  while x < W {
+    cx = x * 30000 / W - 20000
+    cy = y * 20000 / H - 10000
+    zx = 0
+    zy = 0
+    it = 0
+    while it < MAX {
+      xx = zx * zx / SCALE
+      yy = zy * zy / SCALE
+      if xx + yy > 40000 { break }
+      nx = xx - yy + cx
+      ny = 2 * zx * zy / SCALE + cy
+      zx = nx
+      zy = ny
+      it = it + 1
+    }
+    if it >= MAX { print(" ") }
+    else if it < 5 { print(".") }
+    else if it < 10 { print("-") }
+    else if it < 20 { print("+") }
+    else if it < 30 { print("*") }
+    else { print("#") }
+    x = x + 1
+  }
+  println("")
+  y = y + 1
+}

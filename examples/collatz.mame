@@ -1,0 +1,8 @@
+# Print the Collatz sequence starting from N until it reaches 1.
+# Usage: mame run examples/collatz.mame N
+n = int(arg(1))
+println(n)
+while n != 1 {
+  if n % 2 == 0 { n = n / 2 } else { n = 3 * n + 1 }
+  println(n)
+}

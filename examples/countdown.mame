@@ -1,0 +1,8 @@
+# Countdown from N to 1, then "Liftoff!".
+# Usage: mame run examples/countdown.mame N
+n = int(arg(1))
+while n > 0 {
+  println(n)
+  n = n - 1
+}
+println("Liftoff!")

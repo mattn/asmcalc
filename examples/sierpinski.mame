@@ -1,0 +1,28 @@
+# Sierpinski triangle via Pascal's triangle mod 2.
+# A cell (i,j) is filled iff (i AND j) == j — checked bit by bit
+# (we don't have bitwise ops, so loop over base-2 digits).
+# Usage: mame run examples/sierpinski.mame [N]   (default 16)
+n = 16
+if narg() > 0 { n = int(arg(1)) }
+i = 0
+while i < n {
+  s = n - i - 1
+  while s > 0 { print(" "); s = s - 1 }
+  j = 0
+  while j <= i {
+    a = i
+    b = j
+    fill = 1
+    while b > 0 {
+      if b % 2 == 1 {
+        if a % 2 == 0 { fill = 0 }
+      }
+      a = a / 2
+      b = b / 2
+    }
+    if fill == 1 { print("* ") } else { print("  ") }
+    j = j + 1
+  }
+  println("")
+  i = i + 1
+}

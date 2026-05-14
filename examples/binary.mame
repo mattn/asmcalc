@@ -1,0 +1,15 @@
+# Print N in binary, MSB first. Works without arrays or string concatenation
+# by first finding the highest set bit, then walking down.
+# Usage: mame run examples/binary.mame N
+n = int(arg(1))
+if n == 0 {
+  println(0)
+} else {
+  p = 1
+  while p * 2 <= n { p = p * 2 }
+  while p > 0 {
+    if n / p % 2 == 1 { print(1) } else { print(0) }
+    p = p / 2
+  }
+  println("")
+}

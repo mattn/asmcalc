@@ -1,0 +1,25 @@
+# Sierpinski carpet — base-3 self-similar.
+# (i,j) is a hole iff at some level both base-3 digits are 1.
+# Usage: mame run examples/carpet.mame [N]   (default 27, must be 3^k)
+n = 27
+if narg() > 0 { n = int(arg(1)) }
+i = 0
+while i < n {
+  j = 0
+  while j < n {
+    a = i
+    b = j
+    hole = 0
+    while a > 0 {
+      if a % 3 == 1 {
+        if b % 3 == 1 { hole = 1 }
+      }
+      a = a / 3
+      b = b / 3
+    }
+    if hole == 1 { print(" ") } else { print("#") }
+    j = j + 1
+  }
+  println("")
+  i = i + 1
+}

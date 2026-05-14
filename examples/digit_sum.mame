@@ -1,0 +1,10 @@
+# Sum the decimal digits of N.
+# Usage: mame run examples/digit_sum.mame N
+n = int(arg(1))
+if n < 0 { n = 0 - n }
+s = 0
+while n > 0 {
+  s = s + n % 10
+  n = n / 10
+}
+println(s)

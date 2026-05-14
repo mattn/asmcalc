@@ -1,0 +1,14 @@
+# Print every prime up to N (trial division — no array needed).
+# Usage: mame run examples/primes.mame N
+n = int(arg(1))
+k = 2
+while k <= n {
+  i = 2
+  prime = 1
+  while i * i <= k {
+    if k % i == 0 { prime = 0; break }
+    i = i + 1
+  }
+  if prime == 1 { println(k) }
+  k = k + 1
+}

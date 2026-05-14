@@ -1,0 +1,65 @@
+# Koch curve (snowflake side) — depth-N fractal plotted with float arithmetic.
+# All segment angles are multiples of 60°, so we look up cos/sin from a tiny
+# table. For each cell we re-walk the whole curve and sub-sample each segment
+# to draw a continuous line (no arrays, so each cell re-runs the walk).
+# Usage: mame run examples/koch.mame [DEPTH]   (default 4)
+W = 70
+H = 14
+N = 4
+if narg() > 0 { N = int(arg(1)) }
+SUBS = 4
+segments = 1
+j = 0
+while j < N { segments = segments * 4; j = j + 1 }
+step = 1.0
+j = 0
+while j < N { step = step / 3.0; j = j + 1 }
+ymax = 0.30
+r = 0
+while r < H {
+  c = 0
+  while c < W {
+    x = 0.0
+    y = 0.0
+    hit = 0
+    seg = 0
+    while seg < segments {
+      a = 0
+      s = seg
+      d = 0
+      while d < N {
+        digit = s % 4
+        if digit == 1 { a = a + 1 }
+        else if digit == 2 { a = a + 5 }
+        s = s / 4
+        d = d + 1
+      }
+      a = a % 6
+      cosA = 1.0
+      sinA = 0.0
+      if a == 1 { cosA = 0.5; sinA = 0.8660254 }
+      else if a == 2 { cosA = 0.0 - 0.5; sinA = 0.8660254 }
+      else if a == 3 { cosA = 0.0 - 1.0; sinA = 0.0 }
+      else if a == 4 { cosA = 0.0 - 0.5; sinA = 0.0 - 0.8660254 }
+      else if a == 5 { cosA = 0.5; sinA = 0.0 - 0.8660254 }
+      sub = 1
+      while sub <= SUBS {
+        t = float(sub) / float(SUBS)
+        xs = x + step * cosA * t
+        ys = y + step * sinA * t
+        px = int(xs * float(W))
+        py = H - 1 - int(ys * float(H) / ymax)
+        if px == c { if py == r { hit = 1; break } }
+        sub = sub + 1
+      }
+      x = x + step * cosA
+      y = y + step * sinA
+      if hit == 1 { break }
+      seg = seg + 1
+    }
+    if hit == 1 { print("#") } else { print(" ") }
+    c = c + 1
+  }
+  println("")
+  r = r + 1
+}

@@ -1,0 +1,37 @@
+# Mandelbrot set rendered with float arithmetic (cf. mandelbrot.mame which
+# uses fixed-point ints from the era before float support).
+# Output uses '.', '-', '+', '*', '#' for escape time, ' ' for in-set points.
+# Usage: mame run examples/mandelbrot_float.mame
+W = 78
+H = 30
+MAX = 40
+y = 0
+while y < H {
+  x = 0
+  while x < W {
+    cx = float(x) * 3.0 / float(W) - 2.0
+    cy = float(y) * 2.0 / float(H) - 1.0
+    zx = 0.0
+    zy = 0.0
+    it = 0
+    while it < MAX {
+      xx = zx * zx
+      yy = zy * zy
+      if xx + yy > 4.0 { break }
+      nx = xx - yy + cx
+      ny = 2.0 * zx * zy + cy
+      zx = nx
+      zy = ny
+      it = it + 1
+    }
+    if it >= MAX { print(" ") }
+    else if it < 5 { print(".") }
+    else if it < 10 { print("-") }
+    else if it < 20 { print("+") }
+    else if it < 30 { print("*") }
+    else { print("#") }
+    x = x + 1
+  }
+  println("")
+  y = y + 1
+}

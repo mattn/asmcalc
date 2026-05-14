@@ -1,0 +1,9 @@
+# Sum every argument as an integer.
+# Usage: mame run examples/sum_args.mame 1 2 3 4
+i = 1
+s = 0
+while i <= narg() {
+  s = s + int(arg(i))
+  i = i + 1
+}
+println(s)

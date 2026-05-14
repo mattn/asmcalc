@@ -1,0 +1,12 @@
+# Least common multiple via gcd.
+# Usage: mame run examples/lcm.mame A B
+a = int(arg(1))
+b = int(arg(2))
+x = a
+y = b
+while y != 0 {
+  t = x % y
+  x = y
+  y = t
+}
+println(a / x * b)

@@ -1,0 +1,13 @@
+# Test whether N is prime. Usage: mame run examples/prime.mame N
+n = int(arg(1))
+if n < 2 {
+  println("no")
+} else {
+  i = 2
+  prime = 1
+  while i * i <= n {
+    if n % i == 0 { prime = 0; break }
+    i = i + 1
+  }
+  if prime == 1 { println("yes") } else { println("no") }
+}

@@ -1,0 +1,46 @@
+# Barnsley fern — IFS (Iterated Function System) plotted with float arithmetic.
+# Pseudo-random branch selection via an LCG so the result is deterministic.
+# No arrays in mame, so each cell re-runs the chain and asks: "did any of
+# the first K points land here?". K and grid are kept small for speed.
+# Usage: mame run examples/fern.mame
+W = 40
+H = 40
+K = 600
+r = 0
+while r < H {
+  c = 0
+  while c < W {
+    x = 0.0
+    y = 0.0
+    seed = 12345
+    hit = 0
+    i = 0
+    while i < K {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      pick = seed % 100
+      if pick < 1 {
+        nx = 0.0
+        ny = 0.16 * y
+      } else if pick < 86 {
+        nx = 0.85 * x + 0.04 * y
+        ny = 0.0 - 0.04 * x + 0.85 * y + 1.6
+      } else if pick < 93 {
+        nx = 0.20 * x - 0.26 * y
+        ny = 0.23 * x + 0.22 * y + 1.6
+      } else {
+        nx = 0.0 - 0.15 * x + 0.28 * y
+        ny = 0.26 * x + 0.24 * y + 0.44
+      }
+      x = nx
+      y = ny
+      col = int((x + 2.2) * float(W) / 4.9)
+      row = H - 1 - int(y * float(H) / 10.0)
+      if col == c { if row == r { hit = 1; break } }
+      i = i + 1
+    }
+    if hit == 1 { print("#") } else { print(" ") }
+    c = c + 1
+  }
+  println("")
+  r = r + 1
+}

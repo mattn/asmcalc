@@ -1,0 +1,10 @@
+# Check whether a non-negative integer reads the same forwards and backwards.
+# Usage: mame run examples/palindrome.mame N
+n = int(arg(1))
+x = n
+r = 0
+while x > 0 {
+  r = r * 10 + x % 10
+  x = x / 10
+}
+if r == n { println("yes") } else { println("no") }

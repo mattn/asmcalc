@@ -1,0 +1,28 @@
+# Cantor set — each row is one refinement level.
+# At level k, position i is removed iff any of the top k base-3 digits of i is 1.
+# Width is 3^LEVELS, levels 0..LEVELS.
+# Usage: mame run examples/cantor.mame [LEVELS]   (default 4)
+levels = 4
+if narg() > 0 { levels = int(arg(1)) }
+n = 1
+k = 0
+while k < levels { n = n * 3; k = k + 1 }
+level = 0
+while level <= levels {
+  i = 0
+  while i < n {
+    a = i
+    d = 0
+    hole = 0
+    drop = levels - level
+    while d < drop { a = a / 3; d = d + 1 }
+    while a > 0 {
+      if a % 3 == 1 { hole = 1 }
+      a = a / 3
+    }
+    if hole == 1 { print(" ") } else { print("#") }
+    i = i + 1
+  }
+  println("")
+  level = level + 1
+}
