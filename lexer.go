@@ -41,6 +41,14 @@ type Token struct {
 	Name  string
 }
 
+func isIdentStart(r rune) bool {
+	return unicode.IsLetter(r) || r == '_'
+}
+
+func isIdentCont(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
 func (c *Compiler) Lex() {
 	c.tokens = make([]Token, 0)
 	c.pos = 0
@@ -66,9 +74,9 @@ func (c *Compiler) Lex() {
 			c.tokens = append(c.tokens, c.lexNumber(false))
 			continue
 		}
-		if unicode.IsLetter(rune(ch)) {
+		if isIdentStart(rune(ch)) {
 			var name strings.Builder
-			for c.pos < len(c.input) && unicode.IsLetter(rune(c.input[c.pos])) {
+			for c.pos < len(c.input) && isIdentCont(rune(c.input[c.pos])) {
 				name.WriteByte(c.input[c.pos])
 				c.pos++
 			}
@@ -85,7 +93,7 @@ func (c *Compiler) Lex() {
 				canNeg := c.pos == 0
 				if !canNeg {
 					prev := c.input[c.pos-1]
-					canNeg = !unicode.IsDigit(rune(prev)) && !unicode.IsLetter(rune(prev)) && prev != ')' && prev != '-'
+					canNeg = !isIdentCont(rune(prev)) && prev != ')' && prev != '-'
 				}
 				if canNeg {
 					c.pos++

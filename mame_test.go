@@ -41,6 +41,13 @@ func TestLex(t *testing.T) {
 		{"x # tail", []TokenType{TOK_IDENT, TOK_EOF}},
 		{"# c\nx", []TokenType{TOK_SEMI, TOK_IDENT, TOK_EOF}},
 		{"x=1 # tail\ny=2", []TokenType{TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_SEMI, TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_EOF}},
+		{"x1=1", []TokenType{TOK_IDENT, TOK_ASSIGN, TOK_NUM, TOK_EOF}},
+		{"y2", []TokenType{TOK_IDENT, TOK_EOF}},
+		{"foo123bar", []TokenType{TOK_IDENT, TOK_EOF}},
+		{"_x", []TokenType{TOK_IDENT, TOK_EOF}},
+		{"a_b", []TokenType{TOK_IDENT, TOK_EOF}},
+		{"x1-1", []TokenType{TOK_IDENT, TOK_MINUS, TOK_NUM, TOK_EOF}},
+		{"x_-1", []TokenType{TOK_IDENT, TOK_MINUS, TOK_NUM, TOK_EOF}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
