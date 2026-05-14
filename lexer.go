@@ -71,7 +71,7 @@ func (c *Compiler) Lex() {
 			continue
 		}
 		if unicode.IsDigit(rune(ch)) {
-			c.tokens = append(c.tokens, c.lexNumber(false))
+			c.tokens = append(c.tokens, c.lexNumber())
 			continue
 		}
 		if isIdentStart(rune(ch)) {
@@ -89,18 +89,6 @@ func (c *Compiler) Lex() {
 			continue
 		}
 		if ch == '-' {
-			if c.pos+1 < len(c.input) && unicode.IsDigit(rune(c.input[c.pos+1])) {
-				canNeg := c.pos == 0
-				if !canNeg {
-					prev := c.input[c.pos-1]
-					canNeg = !isIdentCont(rune(prev)) && prev != ')' && prev != '-'
-				}
-				if canNeg {
-					c.pos++
-					c.tokens = append(c.tokens, c.lexNumber(true))
-					continue
-				}
-			}
 			c.tokens = append(c.tokens, Token{Type: TOK_MINUS})
 			c.pos++
 			continue
@@ -216,11 +204,10 @@ func (c *Compiler) Lex() {
 }
 
 // lexNumber reads digits and, if followed by `.<digits>`, a fractional part.
-// Returns TOK_NUM or TOK_FNUM. neg flips the sign of the parsed value.
-// The fractional part is built as an integer mantissa and divided once by
-// 10^n so the result is single-rounded (matches strconv.ParseFloat for inputs
-// that fit in int64).
-func (c *Compiler) lexNumber(neg bool) Token {
+// Returns TOK_NUM or TOK_FNUM. The fractional part is built as an integer
+// mantissa and divided once by 10^n so the result is single-rounded (matches
+// strconv.ParseFloat for inputs that fit in int64).
+func (c *Compiler) lexNumber() Token {
 	value := 0
 	for c.pos < len(c.input) && unicode.IsDigit(rune(c.input[c.pos])) {
 		value = value*10 + int(c.input[c.pos]-'0')
@@ -235,14 +222,7 @@ func (c *Compiler) lexNumber(neg bool) Token {
 			scale *= 10
 			c.pos++
 		}
-		f := float64(mantissa) / float64(scale)
-		if neg {
-			f = -f
-		}
-		return Token{Type: TOK_FNUM, Float: f}
-	}
-	if neg {
-		value = -value
+		return Token{Type: TOK_FNUM, Float: float64(mantissa) / float64(scale)}
 	}
 	return Token{Type: TOK_NUM, Value: value}
 }
