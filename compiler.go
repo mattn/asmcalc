@@ -344,8 +344,7 @@ func formatFloatMame(v float64) string {
 	return s[:end]
 }
 
-// atofMame mirrors __str_to_float (draft/atof.s) so eval and compile reject
-// the same inputs.
+// atofMame mirrors __str_to_float so eval and compile reject the same inputs.
 func atofMame(s string) (float64, bool) {
 	i := 0
 	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {

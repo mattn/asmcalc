@@ -654,7 +654,7 @@ func (c *Compiler) emitWindowsArgvPreamble(w io.Writer) {
 	write(w, "  movq %rax, argv_ptr(%rip)", "Save argv pointer")
 }
 
-// __str_to_float(rdi=ptr, rsi=len) -> xmm0=double. Adapted from draft/atof.s.
+// __str_to_float(rdi=ptr, rsi=len) -> xmm0=double.
 // Panics on no-digit / trailing-byte inputs. No exponent support.
 func (c *Compiler) emitStrToFloat(w io.Writer) {
 	if !c.usesStrToFloat {
