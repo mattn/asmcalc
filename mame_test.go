@@ -49,6 +49,11 @@ func TestLex(t *testing.T) {
 		{"a_b", []TokenType{TOK_IDENT, TOK_EOF}},
 		{"x1-1", []TokenType{TOK_IDENT, TOK_MINUS, TOK_NUM, TOK_EOF}},
 		{"x_-1", []TokenType{TOK_IDENT, TOK_MINUS, TOK_NUM, TOK_EOF}},
+		{"1<<2", []TokenType{TOK_NUM, TOK_SHL, TOK_NUM, TOK_EOF}},
+		{"1>>2", []TokenType{TOK_NUM, TOK_SHR, TOK_NUM, TOK_EOF}},
+		{"a<<b", []TokenType{TOK_IDENT, TOK_SHL, TOK_IDENT, TOK_EOF}},
+		{"1 << 2", []TokenType{TOK_NUM, TOK_SHL, TOK_NUM, TOK_EOF}},
+		{"1<=2<<1", []TokenType{TOK_NUM, TOK_LE, TOK_NUM, TOK_SHL, TOK_NUM, TOK_EOF}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -185,6 +190,16 @@ func TestEval(t *testing.T) {
 		{"rand() >= 0", nil, 1},
 		{"rand() % 1", nil, 0},
 		{"n = rand() % 100; if n>=0 { if n<100 { 1 } else { 0 } } else { 0 }", nil, 1},
+		{"1<<4", nil, 16},
+		{"1<<0", nil, 1},
+		{"256>>3", nil, 32},
+		{"-8>>1", nil, -4},
+		{"1+2<<3", nil, 24},
+		{"1<<2+3", nil, 32},
+		{"4<<1==8", nil, 1},
+		{"8>>1<5", nil, 1},
+		{"x=3; x<<2", nil, 12},
+		{"x=64; x>>x>>1", nil, 0},
 	}
 
 	for _, tt := range tests {
@@ -318,6 +333,15 @@ func TestCompile(t *testing.T) {
 		{`println(rand() >= 0)`, nil, 1},
 		{`println(rand() % 1)`, nil, 0},
 		{`n = rand() % 50; if n>=0 { if n<50 { println(1) } else { println(0) } } else { println(0) }`, nil, 1},
+		{"println(1<<4)", nil, 16},
+		{"println(1<<0)", nil, 1},
+		{"println(256>>3)", nil, 32},
+		{"println(-8>>1)", nil, -4},
+		{"println(1+2<<3)", nil, 24},
+		{"println(1<<2+3)", nil, 32},
+		{"println(4<<1==8)", nil, 1},
+		{"println(8>>1<5)", nil, 1},
+		{"x=3; println(x<<2)", nil, 12},
 	}
 
 	tmpDir := t.TempDir()
@@ -507,6 +531,10 @@ func TestEvalPanic(t *testing.T) {
 		{`"a" == "b"`, "invalid operand types"},
 		{`float("1.5") % 2`, "invalid operand types"},
 		{`2 % float("1.5")`, "invalid operand types"},
+		{`1.5 << 1`, "invalid operand types"},
+		{`1 << 1.5`, "invalid operand types"},
+		{`"a" << 1`, "invalid operand types"},
+		{`1 << -1`, "negative shift amount"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -543,6 +571,8 @@ func TestCompilePanic(t *testing.T) {
 		{`println(1 + "x")`, "invalid operand types"},
 		{`println(float("1.5") % 2)`, "invalid operand types"},
 		{`println("a" == "b")`, "invalid operand types"},
+		{`println(1.5 << 1)`, "invalid operand types"},
+		{`println(1 >> 1.5)`, "invalid operand types"},
 	}
 	tmpDir := t.TempDir()
 	for _, tt := range tests {

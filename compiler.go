@@ -258,6 +258,18 @@ func (c *Compiler) evalExpr(e Expr) Value {
 			}
 			return intVal(l.I % r.I)
 		}
+		if e.Op == TOK_SHL || e.Op == TOK_SHR {
+			if l.Tag != TagInt || r.Tag != TagInt {
+				panic("invalid operand types")
+			}
+			if r.I < 0 {
+				panic("negative shift amount")
+			}
+			if e.Op == TOK_SHL {
+				return intVal(l.I << uint(r.I))
+			}
+			return intVal(l.I >> uint(r.I))
+		}
 		if l.Tag == TagFloat || r.Tag == TagFloat {
 			lf := l.F
 			if l.Tag == TagInt {

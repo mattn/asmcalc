@@ -28,6 +28,8 @@ const (
 	TOK_LE
 	TOK_GT
 	TOK_GE
+	TOK_SHL
+	TOK_SHR
 	TOK_SEMI
 	TOK_STRING
 	TOK_FNUM
@@ -149,6 +151,11 @@ func (c *Compiler) Lex() {
 				c.pos += 2
 				continue
 			}
+			if c.pos+1 < len(c.input) && c.input[c.pos+1] == '<' {
+				c.tokens = append(c.tokens, Token{Type: TOK_SHL})
+				c.pos += 2
+				continue
+			}
 			c.tokens = append(c.tokens, Token{Type: TOK_LT})
 			c.pos++
 			continue
@@ -156,6 +163,11 @@ func (c *Compiler) Lex() {
 		if ch == '>' {
 			if c.pos+1 < len(c.input) && c.input[c.pos+1] == '=' {
 				c.tokens = append(c.tokens, Token{Type: TOK_GE})
+				c.pos += 2
+				continue
+			}
+			if c.pos+1 < len(c.input) && c.input[c.pos+1] == '>' {
+				c.tokens = append(c.tokens, Token{Type: TOK_SHR})
 				c.pos += 2
 				continue
 			}

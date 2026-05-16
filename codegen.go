@@ -260,6 +260,8 @@ func (c *Compiler) emitBinOp(w io.Writer, e *BinOp) {
 	write(w, fmt.Sprintf(".Lbin_promote_%d:", id))
 	if e.Op == TOK_MOD {
 		write(w, "  jmp __op_type_err", "% requires both INT")
+	} else if e.Op == TOK_SHL || e.Op == TOK_SHR {
+		write(w, "  jmp __op_type_err", "shift requires both INT")
 	} else {
 		write(w, "  cmpq $1, %r9")
 		write(w, "  je __op_type_err")
@@ -317,6 +319,14 @@ func (c *Compiler) emitBinOpInt(w io.Writer, op TokenType) {
 		write(w, "  cqto")
 		write(w, "  idivq %rcx")
 		write(w, "  movq %rdx, %rax")
+	case TOK_SHL:
+		write(w, "  movq %rax, %rcx", "shift count -> rcx")
+		write(w, "  shlq %cl, %rbx", "L << R")
+		write(w, "  movq %rbx, %rax")
+	case TOK_SHR:
+		write(w, "  movq %rax, %rcx", "shift count -> rcx")
+		write(w, "  sarq %cl, %rbx", "L >> R (arithmetic)")
+		write(w, "  movq %rbx, %rax")
 	case TOK_EQ:
 		c.emitCmpSet(w, "sete", "L == R")
 	case TOK_NE:
